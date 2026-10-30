@@ -1,0 +1,92 @@
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { join } from 'node:path'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
+
+// performance.timeOrigin is the epoch time the Node/Electron process itself
+// started, which is earlier (and more honest) than Date.now() taken here.
+const appStartTime = performance.timeOrigin
+
+let serverProcess: ChildProcess | null = null
+let serverPort: number | null = null
+
+function sidecarBinaryPath(): string {
+  const binName = process.platform === 'win32' ? 'subitosfz-server.exe' : 'subitosfz-server'
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'server', binName)
+  }
+  // Dev: main process output lives at app/out/main, the sidecar is a sibling
+  // repo folder built with `cargo build` inside server/.
+  return join(__dirname, '../../../server/target/debug', binName)
+}
+
+function startSidecar(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(sidecarBinaryPath(), [], { stdio: ['ignore', 'pipe', 'pipe'] })
+    serverProcess = proc
+
+    proc.stdout.on('data', (chunk: Buffer) => {
+      const match = chunk.toString().match(/SUBITOSFZ_SERVER_PORT=(\d+)/)
+      if (match) resolve(Number(match[1]))
+    })
+
+    proc.stderr.on('data', (chunk: Buffer) => {
+      console.error(`[sidecar] ${chunk.toString().trim()}`)
+    })
+
+    proc.on('error', reject)
+    proc.on('exit', (code) => {
+      console.log(`[sidecar] exited with code ${code}`)
+      serverProcess = null
+    })
+  })
+}
+
+async function createWindow(): Promise<void> {
+  const win = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+
+app.whenReady().then(async () => {
+  ipcMain.handle('get-server-port', () => serverPort)
+  ipcMain.handle('get-start-time', () => appStartTime)
+
+  serverPort = await startSidecar()
+  console.log(`[main] sidecar listening on port ${serverPort}`)
+
+  // Startup self-check: fail loudly in the terminal if the sidecar didn't
+  // actually come up healthy, rather than leaving the renderer to guess.
+  try {
+    const res = await fetch(`http://127.0.0.1:${serverPort}/health`)
+    const body = await res.json()
+    console.log('[main] sidecar health check:', body)
+  } catch (err) {
+    console.error('[main] sidecar health check failed:', err)
+  }
+
+  await createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  serverProcess?.kill()
+})

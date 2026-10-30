@@ -1,0 +1,22 @@
+# Rust (server/)
+/server/target/
+
+# Node / Electron (app/)
+/app/node_modules/
+/app/dist/
+/app/out/
+/app/.vite/
+/app/release/
+
+# Env / secrets
+.env
+.env.local
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
