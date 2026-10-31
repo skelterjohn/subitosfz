@@ -7,7 +7,14 @@
 // for unquoted multi-word values (e.g. sample paths with spaces), and
 // proper global/master/group -> region opcode cascading. Does NOT handle
 // #define/#include preprocessor directives.
-use std::collections::BTreeMap;
+//
+// Cell take counts are "distinct sounds", not raw region counts: two
+// regions sharing identical note/articulation/velocity AND identical
+// round-robin/random-slot/trigger opcodes are the same recorded sound
+// (e.g. a stereo pair split into separately panned L/R regions) and count
+// once, not twice. Opcodes that don't gate *selection* - pan, volume, tune,
+// envelope, the sample path itself - are irrelevant to this grouping.
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -104,6 +111,20 @@ fn flush_region(
         merged.extend(r);
         out.push(merged);
     }
+}
+
+// The opcodes (beyond note/articulation/velocity) that determine whether
+// two regions are selection-distinct "different sounds" rather than just
+// different playback facets (pan, etc.) of the same recorded sound.
+type SoundIdentity = (Option<String>, Option<String>, Option<String>, Option<String>);
+
+fn sound_identity(region: &OpcodeMap) -> SoundIdentity {
+    (
+        region.get("seq_position").cloned(),
+        region.get("lorand").cloned(),
+        region.get("hirand").cloned(),
+        region.get("trigger").cloned(),
+    )
 }
 
 fn region_note(region: &OpcodeMap) -> Option<u8> {
@@ -228,9 +249,11 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     // default position.
     articulations.sort_by_key(|a| a.id.parse::<u16>().ok());
 
-    // Second pass: count regions per (note, articulation, velocity) cell,
-    // now that velocity indices are stable.
-    let mut cell_counts: BTreeMap<(u8, String, usize), usize> = BTreeMap::new();
+    // Second pass: group regions per (note, articulation, velocity) cell by
+    // distinct sound identity, now that velocity indices are stable. The
+    // take count is the number of distinct sounds, not raw region count -
+    // see module docs.
+    let mut cell_sounds: BTreeMap<(u8, String, usize), BTreeSet<SoundIdentity>> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -244,18 +267,19 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
             .position(|v| v.lovel == lovel && v.hivel == hivel)
             .unwrap();
 
-        *cell_counts
+        cell_sounds
             .entry((note, articulation_id, velocity_index))
-            .or_insert(0) += 1;
+            .or_default()
+            .insert(sound_identity(region));
     }
 
-    let cells = cell_counts
+    let cells = cell_sounds
         .into_iter()
-        .map(|((note, articulation, velocity_index), take_count)| CellInfo {
+        .map(|((note, articulation, velocity_index), sounds)| CellInfo {
             note,
             articulation,
             velocity_index,
-            take_count,
+            take_count: sounds.len(),
         })
         .collect();
 
