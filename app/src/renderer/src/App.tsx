@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import InstrumentGrid from './components/InstrumentGrid'
 
 interface HealthResponse {
   status: string
@@ -13,12 +14,17 @@ export default function App(): React.JSX.Element {
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
   useEffect(() => {
+    if (!window.api) {
+      setError('preload bridge (window.api) is not available')
+      return
+    }
     window.api.getStartTime().then((startTime) => {
       setStartupMs(Math.round(Date.now() - startTime))
     })
   }, [])
 
   useEffect(() => {
+    if (!window.api) return
     let cancelled = false
 
     async function check(): Promise<void> {
@@ -39,18 +45,32 @@ export default function App(): React.JSX.Element {
   }, [])
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: '2rem' }}>
-      <h1>Subito sfz</h1>
-      <p style={{ color: '#888', fontSize: '0.85rem' }}>
+    <div
+      style={{
+        fontFamily: 'sans-serif',
+        padding: '1.25rem',
+        height: '100vh',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.75rem'
+      }}
+    >
+      <h1 style={{ margin: 0 }}>Subito sfz</h1>
+
+      <InstrumentGrid />
+
+      <div style={{ color: '#888', fontSize: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.4rem' }}>
         {startupMs === null ? 'Measuring startup time…' : `Ready in ${startupMs}ms`}
-      </p>
-      {error && <p style={{ color: 'crimson' }}>Sidecar error: {error}</p>}
-      {!error && !health && <p>Connecting to local server…</p>}
-      {health && (
-        <p>
-          Server status: <strong>{health.status}</strong> (v{health.version})
-        </p>
-      )}
+        {' · '}
+        {error && <span style={{ color: 'crimson' }}>Sidecar error: {error}</span>}
+        {!error && !health && 'Connecting to local server…'}
+        {health && (
+          <>
+            Server status: <strong>{health.status}</strong> (v{health.version})
+          </>
+        )}
+      </div>
     </div>
   )
 }
