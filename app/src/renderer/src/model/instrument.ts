@@ -54,41 +54,10 @@ export function axisValues(instrument: Instrument, axis: Axis): AxisValue[] {
   }
 }
 
-// Placeholder instrument shown before any real .sfz is opened - a full
-// chromatic range with a few demo cells, purely for UI development.
-export function demoInstrument(): Instrument {
-  const LOW_MIDI = 40
-  const HIGH_MIDI = 88
-  const noteAxis: AxisValue[] = Array.from(
-    { length: HIGH_MIDI - LOW_MIDI + 1 },
-    (_, i) => {
-      const midi = LOW_MIDI + i
-      return { id: String(midi), label: midiToName(midi) }
-    }
-  ).reverse() // high to low, so the grid reads top-to-bottom like a keyboard
-
-  const articulationAxis: AxisValue[] = ['normal', 'pizzicato', 'harmonics'].map((a) => ({
-    id: a,
-    label: a
-  }))
-  const velocityAxis: AxisValue[] = ['soft', 'loud'].map((v) => ({ id: v, label: v }))
-
-  const cells: CellStore = new Map()
-  const seeds: Array<[number, string, string, number]> = [
-    [76, 'normal', 'soft', 2],
-    [76, 'normal', 'loud', 3],
-    [74, 'normal', 'soft', 1],
-    [74, 'normal', 'loud', 2],
-    [72, 'normal', 'soft', 2],
-    [72, 'pizzicato', 'soft', 1],
-    [72, 'harmonics', 'loud', 1],
-    [67, 'normal', 'loud', 1]
-  ]
-  for (const [midi, articulation, velocity, takeCount] of seeds) {
-    cells.set(cellKey({ note: String(midi), articulation, velocity }), { takeCount })
-  }
-
-  return { noteAxis, articulationAxis, velocityAxis, cells }
+// Shown before any .sfz has been opened - genuinely empty, not padded out
+// with a default range/articulation/velocity set.
+export function emptyInstrument(): Instrument {
+  return { noteAxis: [], articulationAxis: [], velocityAxis: [], cells: new Map() }
 }
 
 // Shape returned by POST /sfz/parse.

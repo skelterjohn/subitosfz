@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import InstrumentGrid from './components/InstrumentGrid'
 import ImportSf2Modal from './components/ImportSf2Modal'
 import {
-  demoInstrument,
+  emptyInstrument,
   instrumentFromParsedSfz,
   type Instrument,
   type ParsedSfzResponse
@@ -19,7 +19,7 @@ export default function App(): React.JSX.Element {
   const [startupMs, setStartupMs] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
-  const [instrument, setInstrument] = useState<Instrument>(() => demoInstrument())
+  const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
   // Forces InstrumentGrid to remount only once a freshly-parsed instrument
   // is actually ready, rather than keying off sfzFilePath directly - that

@@ -19,9 +19,9 @@ export default function InstrumentGrid({ instrument }: Props): React.JSX.Element
   // path-dependent state to get out of sync with the canonical axis order.
   const [fixedAxis, setFixedAxis] = useState<Axis>('velocity')
   const [fixedValues, setFixedValues] = useState<Record<Axis, string>>(() => ({
-    note: axisValues(instrument, 'note')[0].id,
-    articulation: axisValues(instrument, 'articulation')[0].id,
-    velocity: axisValues(instrument, 'velocity')[0].id
+    note: axisValues(instrument, 'note')[0]?.id ?? '',
+    articulation: axisValues(instrument, 'articulation')[0]?.id ?? '',
+    velocity: axisValues(instrument, 'velocity')[0]?.id ?? ''
   }))
   const layout = useMemo(() => layoutForFixed(fixedAxis), [fixedAxis])
   const rowValues = useMemo(() => axisValues(instrument, layout.rows), [instrument, layout.rows])
@@ -50,6 +50,19 @@ export default function InstrumentGrid({ instrument }: Props): React.JSX.Element
   }
 
   const fixedLabel = fixedAxisValues.find((v) => v.id === fixedId)?.label
+
+  const isEmpty =
+    instrument.noteAxis.length === 0 &&
+    instrument.articulationAxis.length === 0 &&
+    instrument.velocityAxis.length === 0
+
+  if (isEmpty) {
+    return (
+      <div className="instrument-grid">
+        <div className="instrument-grid__empty">no instrument loaded - click open to choose an .sfz file</div>
+      </div>
+    )
+  }
 
   return (
     <div className="instrument-grid">
