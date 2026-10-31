@@ -4,9 +4,10 @@ import {
   cellKey,
   seedDemoCells,
   type Axis,
+  type AxisValue,
   type CellStore
 } from '../model/instrument'
-import { resolveCoordinate, VIEWS } from '../model/views'
+import { layoutForFixed, resolveCoordinate } from '../model/views'
 import './InstrumentGrid.css'
 
 const AXIS_LABEL: Record<Axis, string> = {
@@ -16,7 +17,10 @@ const AXIS_LABEL: Record<Axis, string> = {
 }
 
 export default function InstrumentGrid(): React.JSX.Element {
-  const [viewIndex, setViewIndex] = useState(0)
+  // The layout (which axis is rows/cols/fixed) is entirely derived from
+  // which axis is currently pinned - see layoutForFixed - so there's no
+  // path-dependent state to get out of sync with the canonical axis order.
+  const [fixedAxis, setFixedAxis] = useState<Axis>('velocity')
   const [fixedValues, setFixedValues] = useState<Record<Axis, string>>(() => ({
     note: axisValues('note')[0].id,
     articulation: axisValues('articulation')[0].id,
@@ -24,24 +28,33 @@ export default function InstrumentGrid(): React.JSX.Element {
   }))
   const [cells, setCells] = useState<CellStore>(() => seedDemoCells())
 
-  const view = VIEWS[viewIndex]
-  const rowValues = useMemo(() => axisValues(view.rows), [view.rows])
-  const colValues = useMemo(() => axisValues(view.cols), [view.cols])
-  const fixedAxisValues = useMemo(() => axisValues(view.fixed), [view.fixed])
-  const fixedId = fixedValues[view.fixed]
+  const layout = useMemo(() => layoutForFixed(fixedAxis), [fixedAxis])
+  const rowValues = useMemo(() => axisValues(layout.rows), [layout.rows])
+  const colValues = useMemo(() => axisValues(layout.cols), [layout.cols])
+  const fixedAxisValues = useMemo(() => axisValues(layout.fixed), [layout.fixed])
+  const fixedId = fixedValues[layout.fixed]
 
-  function rotate(): void {
-    setViewIndex((i) => (i + 1) % VIEWS.length)
+  function setFixedValue(id: string): void {
+    setFixedValues((prev) => ({ ...prev, [layout.fixed]: id }))
   }
 
-  function setFixed(id: string): void {
-    setFixedValues((prev) => ({ ...prev, [view.fixed]: id }))
+  // Clicking a row/column header pivots: its axis becomes the new fixed
+  // axis, pinned to the clicked value. The resulting rows/cols assignment
+  // is recomputed from the canonical axis order, not preserved from before.
+  function pivotRow(value: AxisValue): void {
+    setFixedValues((prev) => ({ ...prev, [layout.rows]: value.id }))
+    setFixedAxis(layout.rows)
+  }
+
+  function pivotCol(value: AxisValue): void {
+    setFixedValues((prev) => ({ ...prev, [layout.cols]: value.id }))
+    setFixedAxis(layout.cols)
   }
 
   // Placeholder interaction until real recording is wired up: clicking a
   // cell just cycles its take count, so the grid is visibly interactive.
   function clickCell(rowId: string, colId: string): void {
-    const coord = resolveCoordinate(view, rowId, colId, fixedId)
+    const coord = resolveCoordinate(layout, rowId, colId, fixedId)
     const key = cellKey(coord)
     setCells((prev) => {
       const next = new Map(prev)
@@ -56,41 +69,57 @@ export default function InstrumentGrid(): React.JSX.Element {
     })
   }
 
+  const fixedLabel = fixedAxisValues.find((v) => v.id === fixedId)?.label
+
   return (
     <div className="instrument-grid">
       <div className="instrument-grid__toolbar">
-        <button type="button" onClick={rotate}>
-          ⟳ rotate
-        </button>
-        <span className="instrument-grid__view-label">{view.label}</span>
-        <label className="instrument-grid__fixed-select">
-          viewing {AXIS_LABEL[view.fixed]}:
-          <select value={fixedId} onChange={(e) => setFixed(e.target.value)}>
+        <span className="instrument-grid__pivot-label">
+          pivot: {AXIS_LABEL[layout.fixed]}{' '}
+          <select
+            className="instrument-grid__pivot-select"
+            value={fixedId}
+            onChange={(e) => setFixedValue(e.target.value)}
+          >
             {fixedAxisValues.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.label}
               </option>
             ))}
           </select>
-        </label>
+        </span>
       </div>
 
       <div className="instrument-grid__scroll">
         <table className="instrument-grid__table">
           <thead>
             <tr>
-              <th className="instrument-grid__corner">{AXIS_LABEL[view.rows]}</th>
+              <th className="instrument-grid__corner">{AXIS_LABEL[layout.rows]}</th>
               {colValues.map((col) => (
-                <th key={col.id}>{col.label}</th>
+                <th
+                  key={col.id}
+                  className="instrument-grid__header-cell"
+                  onClick={() => pivotCol(col)}
+                  title={`Pivot: ${AXIS_LABEL[layout.cols]} [${col.label}]`}
+                >
+                  {col.label}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rowValues.map((row) => (
               <tr key={row.id}>
-                <th scope="row">{row.label}</th>
+                <th
+                  scope="row"
+                  className="instrument-grid__header-cell"
+                  onClick={() => pivotRow(row)}
+                  title={`Pivot: ${AXIS_LABEL[layout.rows]} [${row.label}]`}
+                >
+                  {row.label}
+                </th>
                 {colValues.map((col) => {
-                  const coord = resolveCoordinate(view, row.id, col.id, fixedId)
+                  const coord = resolveCoordinate(layout, row.id, col.id, fixedId)
                   const data = cells.get(cellKey(coord))
                   const takeCount = data?.takeCount ?? 0
                   return (
@@ -101,9 +130,7 @@ export default function InstrumentGrid(): React.JSX.Element {
                           takeCount > 0 ? 'instrument-grid__cell is-filled' : 'instrument-grid__cell'
                         }
                         onClick={() => clickCell(row.id, col.id)}
-                        title={`${row.label} / ${col.label} / ${AXIS_LABEL[view.fixed]}: ${
-                          fixedAxisValues.find((v) => v.id === fixedId)?.label
-                        }`}
+                        title={`${row.label} / ${col.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel}`}
                       >
                         {takeCount > 0 ? takeCount : ''}
                       </button>

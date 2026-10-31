@@ -13,19 +13,11 @@
   flex-wrap: wrap;
 }
 
-.instrument-grid__toolbar button {
-  cursor: pointer;
-  padding: 0.35rem 0.75rem;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  background: #f5f5f5;
-}
-
-.instrument-grid__view-label {
+.instrument-grid__pivot-label {
   font-weight: 600;
 }
 
-.instrument-grid__fixed-select select {
+.instrument-grid__pivot-select {
   margin-left: 0.4rem;
 }
 
@@ -69,6 +61,14 @@
   padding: 0.25rem 0.6rem;
   white-space: nowrap;
   z-index: 1;
+}
+
+.instrument-grid__header-cell {
+  cursor: pointer;
+}
+
+.instrument-grid__header-cell:hover {
+  background: #e8f0fe;
 }
 
 .instrument-grid__corner {
