@@ -3,6 +3,15 @@
 
 export type Axis = 'note' | 'articulation' | 'velocity'
 
+// note and velocity are both continuous ranges (MIDI key 0-127, MIDI
+// velocity 0-127) that need overlap-aware segmentation and containment
+// matching; articulation is the only genuinely discrete axis.
+export type RangeAxis = 'note' | 'velocity'
+
+export function isRangeAxis(axis: Axis): axis is RangeAxis {
+  return axis === 'note' || axis === 'velocity'
+}
+
 export interface AxisValue {
   id: string
   label: string
@@ -16,26 +25,35 @@ export function midiToName(midi: number): string {
   return `${name}${octave}`
 }
 
-// One recorded sound. loKey/hiKey is the full range of keys it covers via
-// pitch-shifting (what the grid stretches it across), while note is just
-// its recorded anchor pitch - loKey <= note <= hiKey in well-formed data.
+// One recorded sound. loKey/hiKey and loVel/hiVel are the full key and
+// velocity ranges it covers (what the grid stretches/matches it across);
+// note is just its recorded anchor pitch - loKey <= note <= hiKey in
+// well-formed data, but a cell can still be *selected* for a note outside
+// that equality via pitch-shift coverage (see cellCoversPoint).
 // Plain array, not a lookup map: with spanning/overlapping cells, "look up
 // the cell at this exact row" no longer makes sense - the UI filters/scans
 // this list instead.
 export interface CellRecord {
   note: string
   articulation: string
-  velocity: string
   loKey: number
   hiKey: number
+  loVel: number
+  hiVel: number
   takeCount: number
   // Path to one representative take, relative to the .sfz file's own
   // directory (same convention the file itself uses for sample=).
   samplePath: string
 }
 
+export function cellRange(cell: CellRecord, axis: RangeAxis): [number, number] {
+  return axis === 'note' ? [cell.loKey, cell.hiKey] : [cell.loVel, cell.hiVel]
+}
+
 // Everything the grid needs to render: the three axes' actual values, and
-// the cells to place within them.
+// the cells to place within them. noteAxis/velocityAxis are only used as
+// convenience defaults (initial pivot value, emptiness check) - the grid
+// itself derives the real displayed ranges dynamically per pivot state.
 export interface Instrument {
   noteAxis: AxisValue[]
   articulationAxis: AxisValue[]
@@ -68,10 +86,11 @@ export interface ParsedSfzResponse {
   cells: Array<{
     note: number
     articulation: string
-    velocityIndex: number
     takeCount: number
     loKey: number
     hiKey: number
+    loVel: number
+    hiVel: number
     samplePath: string
   }>
 }
@@ -86,17 +105,20 @@ export function instrumentFromParsedSfz(parsed: ParsedSfzResponse): Instrument {
     label: a.label
   }))
 
-  const velocityAxis: AxisValue[] = parsed.velocities.map((v, i) => ({
-    id: String(i),
+  // id is the bucket's own lovel, a real velocity number usable directly
+  // for range-containment pivoting - not an index into this list anymore.
+  const velocityAxis: AxisValue[] = parsed.velocities.map((v) => ({
+    id: String(v.lovel),
     label: `${v.lovel}-${v.hivel}`
   }))
 
   const cells: CellRecord[] = parsed.cells.map((c) => ({
     note: String(c.note),
     articulation: c.articulation,
-    velocity: String(c.velocityIndex),
     loKey: c.loKey,
     hiKey: c.hiKey,
+    loVel: c.loVel,
+    hiVel: c.hiVel,
     takeCount: c.takeCount,
     samplePath: c.samplePath
   }))

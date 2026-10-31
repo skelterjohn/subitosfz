@@ -41,14 +41,16 @@ pub struct ArticulationInfo {
 pub struct CellInfo {
     pub note: u8,
     pub articulation: String,
-    #[serde(rename = "velocityIndex")]
-    pub velocity_index: usize,
     #[serde(rename = "takeCount")]
     pub take_count: usize,
     #[serde(rename = "loKey")]
     pub lo_key: u8,
     #[serde(rename = "hiKey")]
     pub hi_key: u8,
+    #[serde(rename = "loVel")]
+    pub lo_vel: u8,
+    #[serde(rename = "hiVel")]
+    pub hi_vel: u8,
     // One representative sample for playback - the first take encountered,
     // not an exhaustive list. Fine for "click a cell to hear roughly what's
     // there"; real per-take playback is its own future UI.
@@ -281,15 +283,16 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     // default position.
     articulations.sort_by_key(|a| a.id.parse::<u16>().ok());
 
-    // Second pass: group regions per (note, articulation, velocity) cell by
-    // distinct sound identity, now that velocity indices are stable. The
-    // take count is the number of distinct sounds, not raw region count -
-    // see module docs. Also track each cell's key span (min lo/max hi
-    // across its regions - normally identical across round-robin/stereo
-    // alternates of the same cell, but taking the union is defensive).
-    let mut cell_sounds: BTreeMap<(u8, String, usize), BTreeSet<SoundIdentity>> = BTreeMap::new();
-    let mut cell_ranges: BTreeMap<(u8, String, usize), (u8, u8)> = BTreeMap::new();
-    let mut cell_samples: BTreeMap<(u8, String, usize), String> = BTreeMap::new();
+    // Second pass: group regions per (note, articulation, lovel, hivel) cell
+    // by distinct sound identity. The take count is the number of distinct
+    // sounds, not raw region count - see module docs. lovel/hivel are part
+    // of the grouping key itself (unlike loKey/hiKey, which aren't - a
+    // region's own key range can vary slightly within a group, so that's
+    // tracked separately as a min/max union instead).
+    type CellKey = (u8, String, u8, u8);
+    let mut cell_sounds: BTreeMap<CellKey, BTreeSet<SoundIdentity>> = BTreeMap::new();
+    let mut cell_key_ranges: BTreeMap<CellKey, (u8, u8)> = BTreeMap::new();
+    let mut cell_samples: BTreeMap<CellKey, String> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -298,11 +301,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
             .unwrap_or_else(|| "normal".to_string());
         let lovel = region.get("lovel").and_then(|v| v.parse::<u8>().ok()).unwrap_or(0);
         let hivel = region.get("hivel").and_then(|v| v.parse::<u8>().ok()).unwrap_or(127);
-        let velocity_index = velocities
-            .iter()
-            .position(|v| v.lovel == lovel && v.hivel == hivel)
-            .unwrap();
-        let key = (note, articulation_id, velocity_index);
+        let key: CellKey = (note, articulation_id, lovel, hivel);
 
         cell_sounds
             .entry(key.clone())
@@ -310,7 +309,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
             .insert(sound_identity(region));
 
         if let Some((lo, hi)) = region_key_range(region) {
-            cell_ranges
+            cell_key_ranges
                 .entry(key.clone())
                 .and_modify(|(existing_lo, existing_hi)| {
                     *existing_lo = (*existing_lo).min(lo);
@@ -326,22 +325,23 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
 
     let cells = cell_sounds
         .into_iter()
-        .map(|((note, articulation, velocity_index), sounds)| {
-            let (lo_key, hi_key) = cell_ranges
-                .get(&(note, articulation.clone(), velocity_index))
+        .map(|((note, articulation, lovel, hivel), sounds)| {
+            let (lo_key, hi_key) = cell_key_ranges
+                .get(&(note, articulation.clone(), lovel, hivel))
                 .copied()
                 .unwrap_or((note, note));
             let sample_path = cell_samples
-                .get(&(note, articulation.clone(), velocity_index))
+                .get(&(note, articulation.clone(), lovel, hivel))
                 .cloned()
                 .unwrap_or_default();
             CellInfo {
                 note,
                 articulation,
-                velocity_index,
                 take_count: sounds.len(),
                 lo_key,
                 hi_key,
+                lo_vel: lovel,
+                hi_vel: hivel,
                 sample_path,
             }
         })

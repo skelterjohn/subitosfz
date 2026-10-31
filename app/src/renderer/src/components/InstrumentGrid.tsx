@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import {
   axisValues,
+  cellRange,
+  isRangeAxis,
   midiToName,
   type Axis,
-  type AxisValue,
   type CellRecord,
   type Instrument
 } from '../model/instrument'
@@ -21,28 +22,32 @@ interface Props {
   onPlayCell: (cell: CellRecord) => void
 }
 
-// A row on screen. For the note axis this is a *compressed* key range, not
-// one row per semitone - see computeNoteSegments.
-interface DisplayRow {
+// A row or column on screen. For a range axis (note/velocity) this is a
+// *compressed* range, not one per raw value - see computeRangeSegments.
+interface DisplayUnit {
   id: string
   label: string
-  loKey?: number
-  hiKey?: number
+  lo?: number
+  hi?: number
 }
 
-// Partitions a set of cells' [loKey, hiKey] ranges into the maximal
-// sub-ranges where the *set* of covering cells doesn't change - the same
-// idea as the velocity axis already being one row per distinct lovel/hivel
-// bucket, just computed (velocity buckets are opcodes; key coverage has to
-// be derived from overlapping ranges). Standard sweep-line partitioning:
-// every range contributes a "starts here" and "ends just after here"
-// breakpoint, and consecutive breakpoints bound one segment.
-function computeNoteSegments(cells: CellRecord[]): Array<{ lo: number; hi: number }> {
+// Partitions a set of cells' ranges (on the given range axis) into the
+// maximal sub-ranges where the *set* of covering cells doesn't change -
+// the same idea as articulation already being one row per distinct value,
+// just derived from overlap math instead of a direct opcode. Standard
+// sweep-line partitioning: every range contributes a "starts here" and
+// "ends just after here" breakpoint; consecutive breakpoints bound one
+// segment.
+function computeRangeSegments(
+  cells: CellRecord[],
+  axis: 'note' | 'velocity'
+): Array<{ lo: number; hi: number }> {
   if (cells.length === 0) return []
   const breakpoints = new Set<number>()
   for (const c of cells) {
-    breakpoints.add(c.loKey)
-    breakpoints.add(c.hiKey + 1)
+    const [lo, hi] = cellRange(c, axis)
+    breakpoints.add(lo)
+    breakpoints.add(hi + 1)
   }
   const sorted = Array.from(breakpoints).sort((a, b) => a - b)
   const segments: Array<{ lo: number; hi: number }> = []
@@ -52,6 +57,41 @@ function computeNoteSegments(cells: CellRecord[]): Array<{ lo: number; hi: numbe
     if (hi >= lo) segments.push({ lo, hi })
   }
   return segments
+}
+
+function formatRangeLabel(lo: number, hi: number, axis: 'note' | 'velocity'): string {
+  if (axis === 'note') {
+    return lo === hi ? midiToName(hi) : `${midiToName(hi)}–${midiToName(lo)}`
+  }
+  return lo === hi ? String(lo) : `${lo}-${hi}`
+}
+
+// Builds the units for one side of the grid (rows or cols). Note always
+// reads high-to-low (keyboard convention); velocity reads low-to-high.
+function computeDisplayUnits(
+  axis: Axis,
+  cells: CellRecord[],
+  instrument: Instrument
+): DisplayUnit[] {
+  if (isRangeAxis(axis)) {
+    const segments = computeRangeSegments(cells, axis)
+    const ordered = axis === 'note' ? segments.slice().reverse() : segments
+    return ordered.map((s) => ({
+      id: `${s.lo}-${s.hi}`,
+      label: formatRangeLabel(s.lo, s.hi, axis),
+      lo: s.lo,
+      hi: s.hi
+    }))
+  }
+  return axisValues(instrument, axis).map((a) => ({ id: a.id, label: a.label }))
+}
+
+function unitMatches(cell: CellRecord, axis: Axis, unit: DisplayUnit): boolean {
+  if (isRangeAxis(axis)) {
+    const [lo, hi] = cellRange(cell, axis)
+    return lo <= (unit.lo as number) && hi >= (unit.hi as number)
+  }
+  return cell.articulation === unit.id
 }
 
 // One visual block: a run of consecutive rows, within one column, where the
@@ -79,7 +119,6 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
   }))
 
   const layout = useMemo(() => layoutForFixed(fixedAxis), [fixedAxis])
-  const colValues = useMemo(() => axisValues(instrument, layout.cols), [instrument, layout.cols])
   const fixedAxisValues = useMemo(
     () => axisValues(instrument, layout.fixed),
     [instrument, layout.fixed]
@@ -92,50 +131,53 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
 
   // Clicking a row/column header pivots: its axis becomes the new fixed
   // axis, pinned to the clicked value. The resulting rows/cols assignment
-  // is recomputed from the canonical axis order, not preserved from before.
-  // For a compressed note row spanning several keys, pivoting lands on the
-  // bottom of that range (arbitrary but predictable).
-  function pivotRow(row: DisplayRow): void {
-    const value = row.loKey !== undefined ? String(row.loKey) : row.id
+  // is recomputed from the canonical axis order, not preserved from
+  // before. For a compressed range unit spanning several values, pivoting
+  // lands on the bottom of that range (arbitrary but predictable).
+  function pivotRow(unit: DisplayUnit): void {
+    const value = unit.lo !== undefined ? String(unit.lo) : unit.id
     setFixedValues((prev) => ({ ...prev, [layout.rows]: value }))
     setFixedAxis(layout.rows)
   }
 
-  function pivotCol(value: AxisValue): void {
-    setFixedValues((prev) => ({ ...prev, [layout.cols]: value.id }))
+  function pivotCol(unit: DisplayUnit): void {
+    const value = unit.lo !== undefined ? String(unit.lo) : unit.id
+    setFixedValues((prev) => ({ ...prev, [layout.cols]: value }))
     setFixedAxis(layout.cols)
   }
 
   const fixedLabel = fixedAxisValues.find((v) => v.id === fixedId)?.label
 
-  // Only cells visible in the current pivot slice matter for row
-  // computation and placement.
-  const relevantCells = useMemo(
-    () => instrument.cells.filter((c) => c[layout.fixed] === fixedId),
-    [instrument.cells, layout.fixed, fixedId]
+  // Only cells visible in the current pivot slice matter for row/column
+  // computation and placement. Pivoting on a range axis (note or velocity)
+  // needs containment, not exact match: a cell's own anchor note is its
+  // pitch_keycenter, but it also covers neighboring keys via pitch-shift -
+  // e.g. a cell anchored at F#5 can still be what plays when you pivot to
+  // G5, if G5 falls inside that cell's key span. Same idea for velocity.
+  const relevantCells = useMemo(() => {
+    if (isRangeAxis(layout.fixed)) {
+      const point = Number(fixedId)
+      return instrument.cells.filter((c) => {
+        const [lo, hi] = cellRange(c, layout.fixed as 'note' | 'velocity')
+        return lo <= point && hi >= point
+      })
+    }
+    return instrument.cells.filter((c) => c.articulation === fixedId)
+  }, [instrument.cells, layout.fixed, fixedId])
+
+  const displayRows = useMemo(
+    () => computeDisplayUnits(layout.rows, relevantCells, instrument),
+    [layout.rows, relevantCells, instrument]
+  )
+  const displayCols = useMemo(
+    () => computeDisplayUnits(layout.cols, relevantCells, instrument),
+    [layout.cols, relevantCells, instrument]
   )
 
-  const displayRows: DisplayRow[] = useMemo(() => {
-    if (layout.rows === 'note') {
-      return computeNoteSegments(relevantCells)
-        .reverse() // high to low, so the grid reads top-to-bottom like a keyboard
-        .map((s) => ({
-          id: `${s.lo}-${s.hi}`,
-          label: s.lo === s.hi ? midiToName(s.hi) : `${midiToName(s.hi)}–${midiToName(s.lo)}`,
-          loKey: s.lo,
-          hiKey: s.hi
-        }))
-    }
-    return axisValues(instrument, layout.rows)
-  }, [instrument, layout.rows, relevantCells])
-
   // Builds one block per (column, run-of-rows-with-the-same-match-set).
-  // Outside the note axis this always degenerates to single-row blocks of
-  // 0 or 1 match, since note/articulation/velocity are grouped by exact id
-  // already - overlap can only arise from key-range math.
   const blocks: Block[] = useMemo(() => {
     const out: Block[] = []
-    colValues.forEach((col, colIndex) => {
+    displayCols.forEach((col, colIndex) => {
       let runStart = -1
       let runMatches: CellRecord[] = []
 
@@ -146,16 +188,9 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
       }
 
       displayRows.forEach((row, rowIdx) => {
-        const matches =
-          layout.rows === 'note'
-            ? relevantCells.filter(
-                (c) =>
-                  c[layout.cols] === col.id &&
-                  c.loKey <= (row.loKey as number) &&
-                  c.hiKey >= (row.hiKey as number)
-              )
-            : relevantCells.filter((c) => c[layout.rows] === row.id && c[layout.cols] === col.id)
-
+        const matches = relevantCells.filter(
+          (c) => unitMatches(c, layout.rows, row) && unitMatches(c, layout.cols, col)
+        )
         const sameAsRun =
           runMatches.length === matches.length && runMatches.every((m, i) => m === matches[i])
         if (!sameAsRun) {
@@ -167,7 +202,7 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
       flush(displayRows.length)
     })
     return out
-  }, [colValues, displayRows, layout, relevantCells])
+  }, [displayCols, displayRows, layout, relevantCells])
 
   const isEmpty =
     instrument.noteAxis.length === 0 &&
@@ -207,7 +242,7 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
         <div
           className="instrument-grid__spangrid"
           style={{
-            gridTemplateColumns: `max-content repeat(${colValues.length}, 44px)`,
+            gridTemplateColumns: `max-content repeat(${displayCols.length}, 44px)`,
             gridTemplateRows: `auto repeat(${displayRows.length}, 28px)`
           }}
         >
@@ -215,7 +250,7 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
             {AXIS_LABEL[layout.rows]}
           </div>
 
-          {colValues.map((col, i) => (
+          {displayCols.map((col, i) => (
             <div
               key={col.id}
               className="instrument-grid__col-header"
@@ -241,7 +276,7 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
 
           {/* Base background layer so gaps stay visible even with no data there. */}
           {displayRows.map((row, rowIdx) =>
-            colValues.map((col, colIdx) => (
+            displayCols.map((col, colIdx) => (
               <div
                 key={`${row.id}-${col.id}`}
                 className="instrument-grid__cell"
@@ -271,8 +306,8 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
                 }}
                 title={
                   isOverlap
-                    ? `${rowLabel} / ${colValues[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - ${block.matches.length} overlapping sounds claim this range`
-                    : `${rowLabel} / ${colValues[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - click to play`
+                    ? `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - ${block.matches.length} overlapping sounds claim this range`
+                    : `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - anchor ${midiToName(Number(cell.note))} - click to play`
                 }
                 onClick={() => onPlayCell(cell)}
               >
@@ -280,11 +315,14 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
                   <span className="instrument-grid__cell-count">!</span>
                 ) : (
                   <>
-                    {layout.rows === 'note' && (
-                      <span className="instrument-grid__cell-note">
-                        {midiToName(Number(cell.note))}
-                      </span>
-                    )}
+                    {/* Always shown, not just when note is a displayed axis:
+                        a cell's anchor can differ from a pivoted note (it's
+                        covering that note via pitch-shift), so this is the
+                        only place that distinction is visible at all when
+                        note is the fixed axis. */}
+                    <span className="instrument-grid__cell-note">
+                      {midiToName(Number(cell.note))}
+                    </span>
                     <span className="instrument-grid__cell-count">{cell.takeCount}</span>
                   </>
                 )}
