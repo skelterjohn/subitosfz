@@ -31,12 +31,12 @@ export const NOTE_AXIS: AxisValue[] = Array.from(
   }
 ).reverse() // high to low, so the grid reads top-to-bottom like a keyboard
 
-export const ARTICULATION_AXIS: AxisValue[] = ['Normal', 'Pizzicato', 'Harmonics'].map((a) => ({
+export const ARTICULATION_AXIS: AxisValue[] = ['normal', 'pizzicato', 'harmonics'].map((a) => ({
   id: a,
   label: a
 }))
 
-export const VELOCITY_AXIS: AxisValue[] = ['Soft', 'Loud'].map((v) => ({ id: v, label: v }))
+export const VELOCITY_AXIS: AxisValue[] = ['soft', 'loud'].map((v) => ({ id: v, label: v }))
 
 export function axisValues(axis: Axis): AxisValue[] {
   switch (axis) {
@@ -73,14 +73,14 @@ export type CellStore = Map<string, CellData>
 export function seedDemoCells(): CellStore {
   const store: CellStore = new Map()
   const seeds: Array<[number, string, string, number]> = [
-    [76, 'Normal', 'Soft', 2],
-    [76, 'Normal', 'Loud', 3],
-    [74, 'Normal', 'Soft', 1],
-    [74, 'Normal', 'Loud', 2],
-    [72, 'Normal', 'Soft', 2],
-    [72, 'Pizzicato', 'Soft', 1],
-    [72, 'Harmonics', 'Loud', 1],
-    [67, 'Normal', 'Loud', 1]
+    [76, 'normal', 'soft', 2],
+    [76, 'normal', 'loud', 3],
+    [74, 'normal', 'soft', 1],
+    [74, 'normal', 'loud', 2],
+    [72, 'normal', 'soft', 2],
+    [72, 'pizzicato', 'soft', 1],
+    [72, 'harmonics', 'loud', 1],
+    [67, 'normal', 'loud', 1]
   ]
   for (const [midi, articulation, velocity, takeCount] of seeds) {
     store.set(cellKey({ note: String(midi), articulation, velocity }), { takeCount })

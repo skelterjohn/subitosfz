@@ -56,7 +56,7 @@ export default function App(): React.JSX.Element {
         gap: '0.75rem'
       }}
     >
-      <h1 style={{ margin: 0 }}>Subito sfz</h1>
+      <h1 style={{ margin: 0 }}>subito sfz</h1>
 
       <InstrumentGrid />
 

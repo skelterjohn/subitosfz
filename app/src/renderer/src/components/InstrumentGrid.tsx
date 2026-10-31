@@ -10,9 +10,9 @@ import { resolveCoordinate, VIEWS } from '../model/views'
 import './InstrumentGrid.css'
 
 const AXIS_LABEL: Record<Axis, string> = {
-  note: 'Note',
-  articulation: 'Articulation',
-  velocity: 'Velocity'
+  note: 'note',
+  articulation: 'articulation',
+  velocity: 'velocity'
 }
 
 export default function InstrumentGrid(): React.JSX.Element {
@@ -60,11 +60,11 @@ export default function InstrumentGrid(): React.JSX.Element {
     <div className="instrument-grid">
       <div className="instrument-grid__toolbar">
         <button type="button" onClick={rotate}>
-          ⟳ Rotate
+          ⟳ rotate
         </button>
         <span className="instrument-grid__view-label">{view.label}</span>
         <label className="instrument-grid__fixed-select">
-          Viewing {AXIS_LABEL[view.fixed]}:
+          viewing {AXIS_LABEL[view.fixed]}:
           <select value={fixedId} onChange={(e) => setFixed(e.target.value)}>
             {fixedAxisValues.map((v) => (
               <option key={v.id} value={v.id}>
