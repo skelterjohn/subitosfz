@@ -1,9 +1,12 @@
 use std::io::Write;
+use std::path::PathBuf;
 
-use axum::{routing::get, Json, Router};
-use serde::Serialize;
+use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
+
+mod sf2;
 
 #[derive(Serialize)]
 struct Health {
@@ -18,11 +21,65 @@ async fn health() -> Json<Health> {
     })
 }
 
+#[derive(Deserialize)]
+struct Sf2PresetsRequest {
+    path: String,
+}
+
+#[derive(Serialize)]
+struct Sf2PresetsResponse {
+    presets: Vec<sf2::PresetSummary>,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+}
+
+async fn sf2_presets(
+    Json(req): Json<Sf2PresetsRequest>,
+) -> Result<Json<Sf2PresetsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    sf2::list_presets(&PathBuf::from(req.path))
+        .map(|presets| Json(Sf2PresetsResponse { presets }))
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
+struct Sf2ExportRequest {
+    path: String,
+    #[serde(rename = "presetIndex")]
+    preset_index: usize,
+    #[serde(rename = "destDir")]
+    dest_dir: String,
+    #[serde(rename = "instrumentName")]
+    instrument_name: String,
+}
+
+async fn sf2_export(
+    Json(req): Json<Sf2ExportRequest>,
+) -> Result<Json<sf2::ExportResult>, (StatusCode, Json<ErrorResponse>)> {
+    sf2::export_preset(
+        &PathBuf::from(req.path),
+        req.preset_index,
+        &PathBuf::from(req.dest_dir),
+        &req.instrument_name,
+    )
+    .map(Json)
+    .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
         .route("/health", get(health))
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any));
+        .route("/sf2/presets", post(sf2_presets))
+        .route("/sf2/export", post(sf2_export))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any)
+        );
 
     // Bind to port 0 so the OS picks a free port, then announce it on stdout
     // so the Electron parent process knows where to send requests.

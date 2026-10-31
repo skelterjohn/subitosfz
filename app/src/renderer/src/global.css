@@ -27,6 +27,21 @@ body,
   -webkit-app-region: drag;
 }
 
+.title-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.title-bar__import {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  padding: 0.35rem 0.75rem;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
+}
+
 .title-bar__close {
   -webkit-app-region: no-drag;
   border: none;

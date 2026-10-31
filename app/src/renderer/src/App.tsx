@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import InstrumentGrid from './components/InstrumentGrid'
+import ImportSf2Modal from './components/ImportSf2Modal'
 
 interface HealthResponse {
   status: string
@@ -10,6 +11,7 @@ export default function App(): React.JSX.Element {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [startupMs, setStartupMs] = useState<number | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
@@ -58,15 +60,22 @@ export default function App(): React.JSX.Element {
     >
       <div className="title-bar">
         <h1 style={{ margin: 0 }}>subito sfz</h1>
-        <button
-          type="button"
-          className="title-bar__close"
-          onClick={() => window.close()}
-          aria-label="Close"
-        >
-          ×
-        </button>
+        <div className="title-bar__actions">
+          <button type="button" className="title-bar__import" onClick={() => setImportOpen(true)}>
+            import sf2/sf3
+          </button>
+          <button
+            type="button"
+            className="title-bar__close"
+            onClick={() => window.close()}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
       </div>
+
+      {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
 
       <InstrumentGrid />
 

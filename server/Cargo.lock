@@ -122,6 +122,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -435,12 +441,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "soundfont"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a7f4cb358863e55f8f1a3882f68601360cf6c42fc53ff2fe9aea41c33e24489"
+
+[[package]]
 name = "subitosfz-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "hound",
  "serde",
  "serde_json",
+ "soundfont",
  "tokio",
  "tower-http",
 ]

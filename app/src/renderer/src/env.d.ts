@@ -7,6 +7,8 @@ declare global {
     api: {
       getServerPort: () => Promise<number>
       getStartTime: () => Promise<number>
+      chooseSf2File: () => Promise<string | null>
+      chooseDirectory: () => Promise<string | null>
     }
   }
 }
