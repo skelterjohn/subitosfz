@@ -37,13 +37,19 @@
 }
 
 .instrument-grid__table {
-  border-collapse: collapse;
+  /* position: sticky on th/td doesn't reliably work with border-collapse:
+     collapse (browsers don't compute sticky offsets correctly for collapsed
+     table cells) - use separate borders instead, with each cell only
+     drawing its right/bottom edge to avoid doubled lines at junctions. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.85rem;
 }
 
 .instrument-grid__table th,
 .instrument-grid__table td {
-  border: 1px solid #e3e3e3;
+  border: 0 solid #e3e3e3;
+  border-width: 0 1px 1px 0;
   padding: 0;
   text-align: center;
 }
@@ -69,8 +75,15 @@
   position: sticky;
   left: 0;
   top: 0;
-  z-index: 2;
   background: #fafafa;
+}
+
+/* Needs to beat ".instrument-grid__table thead th"'s specificity (1 class +
+   2 elements) for z-index to actually apply - otherwise the corner cell
+   ties z-index with the sticky row-header column and loses the stacking
+   order tiebreak to whichever row label happens to be scrolled under it. */
+.instrument-grid__table thead th.instrument-grid__corner {
+  z-index: 2;
 }
 
 .instrument-grid__cell {
