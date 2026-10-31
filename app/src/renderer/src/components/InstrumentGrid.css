@@ -89,7 +89,9 @@
 .instrument-grid__cell {
   width: 44px;
   height: 28px;
-  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: repeating-linear-gradient(
     45deg,
     #fcfcfc,
@@ -97,14 +99,8 @@
     #f4f4f4 4px,
     #f4f4f4 8px
   );
-  cursor: pointer;
   color: #333;
   font-size: 0.8rem;
-}
-
-.instrument-grid__cell:hover {
-  outline: 2px solid #8ab4f8;
-  outline-offset: -2px;
 }
 
 .instrument-grid__cell.is-filled {

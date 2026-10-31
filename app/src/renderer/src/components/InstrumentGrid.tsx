@@ -1,12 +1,5 @@
 import { useMemo, useState } from 'react'
-import {
-  axisValues,
-  cellKey,
-  type Axis,
-  type AxisValue,
-  type CellStore,
-  type Instrument
-} from '../model/instrument'
+import { axisValues, cellKey, type Axis, type AxisValue, type Instrument } from '../model/instrument'
 import { layoutForFixed, resolveCoordinate } from '../model/views'
 import './InstrumentGrid.css'
 
@@ -30,8 +23,6 @@ export default function InstrumentGrid({ instrument }: Props): React.JSX.Element
     articulation: axisValues(instrument, 'articulation')[0].id,
     velocity: axisValues(instrument, 'velocity')[0].id
   }))
-  const [cells, setCells] = useState<CellStore>(() => instrument.cells)
-
   const layout = useMemo(() => layoutForFixed(fixedAxis), [fixedAxis])
   const rowValues = useMemo(() => axisValues(instrument, layout.rows), [instrument, layout.rows])
   const colValues = useMemo(() => axisValues(instrument, layout.cols), [instrument, layout.cols])
@@ -56,24 +47,6 @@ export default function InstrumentGrid({ instrument }: Props): React.JSX.Element
   function pivotCol(value: AxisValue): void {
     setFixedValues((prev) => ({ ...prev, [layout.cols]: value.id }))
     setFixedAxis(layout.cols)
-  }
-
-  // Placeholder interaction until real recording is wired up: clicking a
-  // cell just cycles its take count, so the grid is visibly interactive.
-  function clickCell(rowId: string, colId: string): void {
-    const coord = resolveCoordinate(layout, rowId, colId, fixedId)
-    const key = cellKey(coord)
-    setCells((prev) => {
-      const next = new Map(prev)
-      const current = next.get(key)?.takeCount ?? 0
-      const takeCount = (current + 1) % 4
-      if (takeCount === 0) {
-        next.delete(key)
-      } else {
-        next.set(key, { takeCount })
-      }
-      return next
-    })
   }
 
   const fixedLabel = fixedAxisValues.find((v) => v.id === fixedId)?.label
@@ -127,20 +100,18 @@ export default function InstrumentGrid({ instrument }: Props): React.JSX.Element
                 </th>
                 {colValues.map((col) => {
                   const coord = resolveCoordinate(layout, row.id, col.id, fixedId)
-                  const data = cells.get(cellKey(coord))
+                  const data = instrument.cells.get(cellKey(coord))
                   const takeCount = data?.takeCount ?? 0
                   return (
                     <td key={col.id}>
-                      <button
-                        type="button"
+                      <div
                         className={
                           takeCount > 0 ? 'instrument-grid__cell is-filled' : 'instrument-grid__cell'
                         }
-                        onClick={() => clickCell(row.id, col.id)}
                         title={`${row.label} / ${col.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel}`}
                       >
                         {takeCount > 0 ? takeCount : ''}
-                      </button>
+                      </div>
                     </td>
                   )
                 })}
