@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu } from 'electron'
 import { join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
+import windowStateKeeper from 'electron-window-state'
 
 // performance.timeOrigin is the epoch time the Node/Electron process itself
 // started, which is earlier (and more honest) than Date.now() taken here.
@@ -43,15 +44,26 @@ function startSidecar(): Promise<number> {
 }
 
 async function createWindow(): Promise<void> {
+  // Persists/restores window position+size (and maximized state) across
+  // launches, in a JSON file under app.getPath('userData').
+  const windowState = windowStateKeeper({
+    defaultWidth: 1000,
+    defaultHeight: 700
+  })
+
   const win = new BrowserWindow({
-    width: 1000,
-    height: 700,
+    x: windowState.x,
+    y: windowState.y,
+    width: windowState.width,
+    height: windowState.height,
     frame: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
     }
   })
+
+  windowState.manage(win)
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
