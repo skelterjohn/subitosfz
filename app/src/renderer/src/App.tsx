@@ -4,6 +4,7 @@ import ImportSf2Modal from './components/ImportSf2Modal'
 import {
   emptyInstrument,
   instrumentFromParsedSfz,
+  type CellRecord,
   type Instrument,
   type ParsedSfzResponse
 } from './model/instrument'
@@ -51,6 +52,24 @@ export default function App(): React.JSX.Element {
       setLoadGeneration((g) => g + 1)
     } catch (err) {
       setSfzLoadError(String(err))
+    }
+  }
+
+  async function playCell(cell: CellRecord): Promise<void> {
+    if (!sfzFilePath || !cell.samplePath) return
+    try {
+      const bytes = await window.api.readAudioFile(sfzFilePath, cell.samplePath)
+      const ext = cell.samplePath.split('.').pop()?.toLowerCase()
+      const mime = ext === 'ogg' ? 'audio/ogg' : 'audio/wav'
+      // IPC always hands back a real ArrayBuffer (never SharedArrayBuffer),
+      // but TS's generic Uint8Array<ArrayBufferLike> type doesn't guarantee
+      // that to BlobPart - the cast is safe given where bytes came from.
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }))
+      const audio = new Audio(url)
+      audio.addEventListener('ended', () => URL.revokeObjectURL(url))
+      await audio.play()
+    } catch (err) {
+      console.error('[playback] failed:', err)
     }
   }
 
@@ -130,7 +149,7 @@ export default function App(): React.JSX.Element {
 
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
 
-      <InstrumentGrid key={loadGeneration} instrument={instrument} />
+      <InstrumentGrid key={loadGeneration} instrument={instrument} onPlayCell={playCell} />
 
       <div style={{ color: '#888', fontSize: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.4rem' }}>
         {startupMs === null ? 'Measuring startup time…' : `Ready in ${startupMs}ms`}

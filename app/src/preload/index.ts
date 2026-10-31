@@ -5,7 +5,9 @@ const api = {
   getStartTime: (): Promise<number> => ipcRenderer.invoke('get-start-time'),
   chooseSf2File: (): Promise<string | null> => ipcRenderer.invoke('choose-sf2-file'),
   chooseDirectory: (): Promise<string | null> => ipcRenderer.invoke('choose-directory'),
-  chooseSfzFile: (): Promise<string | null> => ipcRenderer.invoke('choose-sfz-file')
+  chooseSfzFile: (): Promise<string | null> => ipcRenderer.invoke('choose-sfz-file'),
+  readAudioFile: (sfzFilePath: string, relativeSamplePath: string): Promise<Uint8Array> =>
+    ipcRenderer.invoke('read-audio-file', sfzFilePath, relativeSamplePath)
 }
 
 contextBridge.exposeInMainWorld('api', api)

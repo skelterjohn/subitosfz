@@ -11,6 +11,7 @@ const AXIS_LABEL: Record<Axis, string> = {
 
 interface Props {
   instrument: Instrument
+  onPlayCell: (cell: CellRecord) => void
 }
 
 interface PlacedCell extends CellRecord {
@@ -19,7 +20,7 @@ interface PlacedCell extends CellRecord {
   rowEnd: number
 }
 
-export default function InstrumentGrid({ instrument }: Props): React.JSX.Element {
+export default function InstrumentGrid({ instrument, onPlayCell }: Props): React.JSX.Element {
   // The layout (which axis is rows/cols/fixed) is entirely derived from
   // which axis is currently pinned - see layoutForFixed - so there's no
   // path-dependent state to get out of sync with the canonical axis order.
@@ -196,7 +197,8 @@ export default function InstrumentGrid({ instrument }: Props): React.JSX.Element
                   gridColumn: cell.colIndex + 2,
                   gridRow: `${cell.rowStart + 2} / ${cell.rowEnd + 3}`
                 }}
-                title={`${rowLabel} / ${colValues[cell.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel}`}
+                title={`${rowLabel} / ${colValues[cell.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - click to play`}
+                onClick={() => onPlayCell(cell)}
               >
                 {cell.takeCount}
               </div>

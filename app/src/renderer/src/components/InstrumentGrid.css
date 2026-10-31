@@ -111,4 +111,9 @@
   background: #4a7fd9;
   color: white;
   font-weight: 600;
+  cursor: pointer;
+}
+
+.instrument-grid__cell.is-filled:hover {
+  background: #3a6bc0;
 }

@@ -29,6 +29,9 @@ export interface CellRecord {
   loKey: number
   hiKey: number
   takeCount: number
+  // Path to one representative take, relative to the .sfz file's own
+  // directory (same convention the file itself uses for sample=).
+  samplePath: string
 }
 
 // Everything the grid needs to render: the three axes' actual values, and
@@ -69,6 +72,7 @@ export interface ParsedSfzResponse {
     takeCount: number
     loKey: number
     hiKey: number
+    samplePath: string
   }>
 }
 
@@ -93,7 +97,8 @@ export function instrumentFromParsedSfz(parsed: ParsedSfzResponse): Instrument {
     velocity: String(c.velocityIndex),
     loKey: c.loKey,
     hiKey: c.hiKey,
-    takeCount: c.takeCount
+    takeCount: c.takeCount,
+    samplePath: c.samplePath
   }))
 
   return { noteAxis, articulationAxis, velocityAxis, cells }

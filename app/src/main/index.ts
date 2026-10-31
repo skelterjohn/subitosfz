@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import windowStateKeeper from 'electron-window-state'
 
 // performance.timeOrigin is the epoch time the Node/Electron process itself
@@ -135,6 +136,12 @@ app.whenReady().then(async () => {
     const filePath = result.filePaths[0]
     saveImportDirs({ ...dirs, lastSfzDir: dirname(filePath) })
     return filePath
+  })
+
+  ipcMain.handle('read-audio-file', async (_event, sfzFilePath: string, relativeSamplePath: string) => {
+    const fullPath = join(dirname(sfzFilePath), relativeSamplePath)
+    const data = await readFile(fullPath)
+    return new Uint8Array(data)
   })
 
   ipcMain.handle('choose-directory', async () => {

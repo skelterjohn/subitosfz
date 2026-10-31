@@ -49,6 +49,11 @@ pub struct CellInfo {
     pub lo_key: u8,
     #[serde(rename = "hiKey")]
     pub hi_key: u8,
+    // One representative sample for playback - the first take encountered,
+    // not an exhaustive list. Fine for "click a cell to hear roughly what's
+    // there"; real per-take playback is its own future UI.
+    #[serde(rename = "samplePath")]
+    pub sample_path: String,
 }
 
 #[derive(Serialize)]
@@ -284,6 +289,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     // alternates of the same cell, but taking the union is defensive).
     let mut cell_sounds: BTreeMap<(u8, String, usize), BTreeSet<SoundIdentity>> = BTreeMap::new();
     let mut cell_ranges: BTreeMap<(u8, String, usize), (u8, u8)> = BTreeMap::new();
+    let mut cell_samples: BTreeMap<(u8, String, usize), String> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -305,12 +311,16 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
 
         if let Some((lo, hi)) = region_key_range(region) {
             cell_ranges
-                .entry(key)
+                .entry(key.clone())
                 .and_modify(|(existing_lo, existing_hi)| {
                     *existing_lo = (*existing_lo).min(lo);
                     *existing_hi = (*existing_hi).max(hi);
                 })
                 .or_insert((lo, hi));
+        }
+
+        if let Some(sample) = region.get("sample") {
+            cell_samples.entry(key).or_insert_with(|| sample.clone());
         }
     }
 
@@ -321,6 +331,10 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
                 .get(&(note, articulation.clone(), velocity_index))
                 .copied()
                 .unwrap_or((note, note));
+            let sample_path = cell_samples
+                .get(&(note, articulation.clone(), velocity_index))
+                .cloned()
+                .unwrap_or_default();
             CellInfo {
                 note,
                 articulation,
@@ -328,6 +342,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
                 take_count: sounds.len(),
                 lo_key,
                 hi_key,
+                sample_path,
             }
         })
         .collect();
