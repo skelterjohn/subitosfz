@@ -16,31 +16,28 @@ export function midiToName(midi: number): string {
   return `${name}${octave}`
 }
 
-export interface CellCoordinate {
+// One recorded sound. loKey/hiKey is the full range of keys it covers via
+// pitch-shifting (what the grid stretches it across), while note is just
+// its recorded anchor pitch - loKey <= note <= hiKey in well-formed data.
+// Plain array, not a lookup map: with spanning/overlapping cells, "look up
+// the cell at this exact row" no longer makes sense - the UI filters/scans
+// this list instead.
+export interface CellRecord {
   note: string
   articulation: string
   velocity: string
-}
-
-export function cellKey(coord: CellCoordinate): string {
-  return `${coord.note}|${coord.articulation}|${coord.velocity}`
-}
-
-export interface CellData {
-  // Round-robin take count - for a loaded file, the number of regions that
-  // mapped to this (note, articulation, velocity) combination.
+  loKey: number
+  hiKey: number
   takeCount: number
 }
 
-export type CellStore = Map<string, CellData>
-
 // Everything the grid needs to render: the three axes' actual values, and
-// the cell data keyed against them.
+// the cells to place within them.
 export interface Instrument {
   noteAxis: AxisValue[]
   articulationAxis: AxisValue[]
   velocityAxis: AxisValue[]
-  cells: CellStore
+  cells: CellRecord[]
 }
 
 export function axisValues(instrument: Instrument, axis: Axis): AxisValue[] {
@@ -57,7 +54,7 @@ export function axisValues(instrument: Instrument, axis: Axis): AxisValue[] {
 // Shown before any .sfz has been opened - genuinely empty, not padded out
 // with a default range/articulation/velocity set.
 export function emptyInstrument(): Instrument {
-  return { noteAxis: [], articulationAxis: [], velocityAxis: [], cells: new Map() }
+  return { noteAxis: [], articulationAxis: [], velocityAxis: [], cells: [] }
 }
 
 // Shape returned by POST /sfz/parse.
@@ -65,12 +62,19 @@ export interface ParsedSfzResponse {
   notes: number[]
   articulations: Array<{ id: string; label: string }>
   velocities: Array<{ lovel: number; hivel: number }>
-  cells: Array<{ note: number; articulation: string; velocityIndex: number; takeCount: number }>
+  cells: Array<{
+    note: number
+    articulation: string
+    velocityIndex: number
+    takeCount: number
+    loKey: number
+    hiKey: number
+  }>
 }
 
 export function instrumentFromParsedSfz(parsed: ParsedSfzResponse): Instrument {
   const noteAxis: AxisValue[] = [...parsed.notes]
-    .sort((a, b) => b - a) // high to low, matching demoInstrument's convention
+    .sort((a, b) => b - a) // high to low, so the grid reads top-to-bottom like a keyboard
     .map((midi) => ({ id: String(midi), label: midiToName(midi) }))
 
   const articulationAxis: AxisValue[] = parsed.articulations.map((a) => ({
@@ -83,17 +87,14 @@ export function instrumentFromParsedSfz(parsed: ParsedSfzResponse): Instrument {
     label: `${v.lovel}-${v.hivel}`
   }))
 
-  const cells: CellStore = new Map()
-  for (const c of parsed.cells) {
-    cells.set(
-      cellKey({
-        note: String(c.note),
-        articulation: c.articulation,
-        velocity: String(c.velocityIndex)
-      }),
-      { takeCount: c.takeCount }
-    )
-  }
+  const cells: CellRecord[] = parsed.cells.map((c) => ({
+    note: String(c.note),
+    articulation: c.articulation,
+    velocity: String(c.velocityIndex),
+    loKey: c.loKey,
+    hiKey: c.hiKey,
+    takeCount: c.takeCount
+  }))
 
   return { noteAxis, articulationAxis, velocityAxis, cells }
 }

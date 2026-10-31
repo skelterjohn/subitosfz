@@ -1,7 +1,12 @@
 // Parses an existing .sfz file and derives the note x articulation x
 // velocity structure actually present in it, for populating the grid.
-// Only what's actually in the file shows up - no padding out to a full
-// chromatic range or a default articulation/velocity set.
+//
+// The note axis is every MIDI key from the lowest lokey to the highest
+// hikey used anywhere in the file (the instrument's full playable range),
+// not just the keys with their own dedicated recording - a cell's lo/hi key
+// span is reported so the UI can stretch it across every row it covers via
+// pitch-shifting. Articulations and velocities are still only the distinct
+// values actually present - those axes don't have a "range" concept.
 //
 // Scope: whitespace-tokenized opcode parsing with "greedy value" handling
 // for unquoted multi-word values (e.g. sample paths with spaces), and
@@ -40,6 +45,10 @@ pub struct CellInfo {
     pub velocity_index: usize,
     #[serde(rename = "takeCount")]
     pub take_count: usize,
+    #[serde(rename = "loKey")]
+    pub lo_key: u8,
+    #[serde(rename = "hiKey")]
+    pub hi_key: u8,
 }
 
 #[derive(Serialize)]
@@ -127,19 +136,32 @@ fn sound_identity(region: &OpcodeMap) -> SoundIdentity {
     )
 }
 
+// The anchor note for a region: the pitch it was actually recorded at,
+// used to group round-robin/stereo-split regions into one cell.
 fn region_note(region: &OpcodeMap) -> Option<u8> {
     if let Some(v) = region.get("pitch_keycenter").or_else(|| region.get("key")) {
         if let Ok(n) = v.parse::<u8>() {
             return Some(n);
         }
     }
+    let (lo, hi) = region_key_range(region)?;
+    Some(((lo as u16 + hi as u16) / 2) as u8)
+}
+
+// The full key range a region actually triggers on - what the UI stretches
+// a cell across, as opposed to region_note's single anchor point.
+fn region_key_range(region: &OpcodeMap) -> Option<(u8, u8)> {
     let lokey = region.get("lokey").and_then(|v| v.parse::<u16>().ok());
     let hikey = region.get("hikey").and_then(|v| v.parse::<u16>().ok());
     match (lokey, hikey) {
-        (Some(lo), Some(hi)) => Some(((lo + hi) / 2) as u8),
-        (Some(lo), None) => Some(lo as u8),
-        (None, Some(hi)) => Some(hi as u8),
-        (None, None) => None,
+        (Some(lo), Some(hi)) => Some((lo.min(127) as u8, hi.min(127) as u8)),
+        (Some(lo), None) => Some((lo as u8, lo as u8)),
+        (None, Some(hi)) => Some((hi as u8, hi as u8)),
+        (None, None) => region
+            .get("key")
+            .or_else(|| region.get("pitch_keycenter"))
+            .and_then(|v| v.parse::<u8>().ok())
+            .map(|k| (k, k)),
     }
 }
 
@@ -207,17 +229,19 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         return Err("no regions found in file".to_string());
     }
 
-    // First pass: collect the distinct notes/articulations/velocities that
-    // actually appear, so velocity indices are stable before we count cells.
-    let mut notes: Vec<u8> = Vec::new();
+    // First pass: the note axis is the full playable range (lowest lokey to
+    // highest hikey across every region), and we collect the distinct
+    // articulations/velocities, so velocity indices are stable before we
+    // group cells.
+    let mut lo_bound: Option<u8> = None;
+    let mut hi_bound: Option<u8> = None;
     let mut articulations: Vec<ArticulationInfo> = Vec::new();
     let mut velocities: Vec<VelocityRange> = Vec::new();
 
     for region in &raw_regions {
-        if let Some(note) = region_note(region) {
-            if !notes.contains(&note) {
-                notes.push(note);
-            }
+        if let Some((lo, hi)) = region_key_range(region) {
+            lo_bound = Some(lo_bound.map_or(lo, |b: u8| b.min(lo)));
+            hi_bound = Some(hi_bound.map_or(hi, |b: u8| b.max(hi)));
         }
 
         let articulation_id = region
@@ -242,7 +266,10 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         }
     }
 
-    notes.sort_unstable();
+    let notes: Vec<u8> = match (lo_bound, hi_bound) {
+        (Some(lo), Some(hi)) => (lo..=hi).collect(),
+        _ => Vec::new(),
+    };
     velocities.sort_by_key(|v| v.lovel);
     // Numeric keyswitch ids sort first in note order; "normal" (unparseable)
     // sorts last via None, which is still a sensible single-articulation
@@ -252,8 +279,11 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     // Second pass: group regions per (note, articulation, velocity) cell by
     // distinct sound identity, now that velocity indices are stable. The
     // take count is the number of distinct sounds, not raw region count -
-    // see module docs.
+    // see module docs. Also track each cell's key span (min lo/max hi
+    // across its regions - normally identical across round-robin/stereo
+    // alternates of the same cell, but taking the union is defensive).
     let mut cell_sounds: BTreeMap<(u8, String, usize), BTreeSet<SoundIdentity>> = BTreeMap::new();
+    let mut cell_ranges: BTreeMap<(u8, String, usize), (u8, u8)> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -266,20 +296,39 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
             .iter()
             .position(|v| v.lovel == lovel && v.hivel == hivel)
             .unwrap();
+        let key = (note, articulation_id, velocity_index);
 
         cell_sounds
-            .entry((note, articulation_id, velocity_index))
+            .entry(key.clone())
             .or_default()
             .insert(sound_identity(region));
+
+        if let Some((lo, hi)) = region_key_range(region) {
+            cell_ranges
+                .entry(key)
+                .and_modify(|(existing_lo, existing_hi)| {
+                    *existing_lo = (*existing_lo).min(lo);
+                    *existing_hi = (*existing_hi).max(hi);
+                })
+                .or_insert((lo, hi));
+        }
     }
 
     let cells = cell_sounds
         .into_iter()
-        .map(|((note, articulation, velocity_index), sounds)| CellInfo {
-            note,
-            articulation,
-            velocity_index,
-            take_count: sounds.len(),
+        .map(|((note, articulation, velocity_index), sounds)| {
+            let (lo_key, hi_key) = cell_ranges
+                .get(&(note, articulation.clone(), velocity_index))
+                .copied()
+                .unwrap_or((note, note));
+            CellInfo {
+                note,
+                articulation,
+                velocity_index,
+                take_count: sounds.len(),
+                lo_key,
+                hi_key,
+            }
         })
         .collect();
 

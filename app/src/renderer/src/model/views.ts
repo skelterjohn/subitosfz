@@ -1,4 +1,4 @@
-import type { Axis, CellCoordinate } from './instrument'
+import type { Axis } from './instrument'
 
 // Which axis is on rows, which is on columns, and which is pinned ("pivot")
 // to a single value and hidden from the grid. See docs/design.md's rotate
@@ -17,23 +17,4 @@ export const AXIS_ORDER: Axis[] = ['note', 'articulation', 'velocity']
 export function layoutForFixed(fixed: Axis): AxisLayout {
   const [rows, cols] = AXIS_ORDER.filter((a) => a !== fixed)
   return { rows, cols, fixed }
-}
-
-export function resolveCoordinate(
-  layout: AxisLayout,
-  rowId: string,
-  colId: string,
-  fixedId: string
-): CellCoordinate {
-  const byAxis: Record<Axis, string> = {
-    [layout.rows]: rowId,
-    [layout.cols]: colId,
-    [layout.fixed]: fixedId
-  } as Record<Axis, string>
-
-  return {
-    note: byAxis.note,
-    articulation: byAxis.articulation,
-    velocity: byAxis.velocity
-  }
 }
