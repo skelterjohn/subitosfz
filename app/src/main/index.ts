@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
 import { dirname, join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
@@ -96,6 +96,40 @@ function startSidecar(): Promise<number> {
   })
 }
 
+// Click handlers just forward to the renderer, which already owns the
+// actual open/import logic (and, eventually, save) - the menu is just
+// another entry point into it, not a second implementation.
+function buildMenu(): Menu {
+  const fileMenu: MenuItemConstructorOptions = {
+    label: 'File',
+    submenu: [
+      {
+        label: 'Import SF2/SF3…',
+        click: () => mainWindow?.webContents.send('menu-import')
+      },
+      {
+        label: 'Open…',
+        accelerator: 'CmdOrCtrl+O',
+        click: () => mainWindow?.webContents.send('menu-open')
+      },
+      { type: 'separator' },
+      {
+        label: 'Save',
+        accelerator: 'CmdOrCtrl+S',
+        click: () => mainWindow?.webContents.send('menu-save')
+      },
+      {
+        label: 'Save As…',
+        accelerator: 'CmdOrCtrl+Shift+S',
+        click: () => mainWindow?.webContents.send('menu-save-as')
+      },
+      { type: 'separator' },
+      { role: 'quit', accelerator: 'CmdOrCtrl+Q' }
+    ]
+  }
+  return Menu.buildFromTemplate([fileMenu])
+}
+
 async function createWindow(): Promise<void> {
   // Persists/restores window position+size (and maximized state) across
   // launches, in a JSON file under app.getPath('userData').
@@ -109,7 +143,9 @@ async function createWindow(): Promise<void> {
     y: windowState.y,
     width: windowState.width,
     height: windowState.height,
-    frame: false,
+    // Native frame (not frame: false) so the application menu set via
+    // Menu.setApplicationMenu actually has somewhere to render - a
+    // frameless window hides the menu bar entirely, accelerators aside.
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -127,7 +163,7 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null)
+  Menu.setApplicationMenu(buildMenu())
 
   ipcMain.handle('get-server-port', () => serverPort)
   ipcMain.handle('get-start-time', () => appStartTime)

@@ -13,6 +13,10 @@ declare global {
       getLastSfzFile: () => Promise<string | null>
       setLastSfzFile: (filePath: string | null) => Promise<void>
       readAudioFile: (sfzFilePath: string, relativeSamplePath: string) => Promise<Uint8Array>
+      onMenuImport: (callback: () => void) => () => void
+      onMenuOpen: (callback: () => void) => () => void
+      onMenuSave: (callback: () => void) => () => void
+      onMenuSaveAs: (callback: () => void) => () => void
     }
   }
 }

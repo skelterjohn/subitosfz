@@ -15,16 +15,11 @@ body,
   overflow: hidden;
 }
 
-/* Custom title bar, replacing the native frame (frame: false in main). */
+/* Toolbar row below the native title/menu bar - just the open/import
+   shortcuts, which also exist as File menu items (see main/index.ts). */
 .title-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  -webkit-app-region: drag;
-}
-
-.title-bar h1 {
-  -webkit-app-region: drag;
 }
 
 .open-row {
@@ -58,30 +53,11 @@ body,
 
 .title-bar__open,
 .title-bar__import {
-  -webkit-app-region: no-drag;
   cursor: pointer;
   padding: 0.35rem 0.75rem;
   border-radius: 4px;
   border: 1px solid #ccc;
   background: #f5f5f5;
-}
-
-.title-bar__close {
-  -webkit-app-region: no-drag;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  width: 56px;
-  height: 56px;
-  font-size: 2rem;
-  line-height: 1;
-  color: #666;
-  border-radius: 4px;
-}
-
-.title-bar__close:hover {
-  background: #e81123;
-  color: white;
 }
 
 /* Single outline shared by SampleEditorPanel (criteria) and SampleTakeList

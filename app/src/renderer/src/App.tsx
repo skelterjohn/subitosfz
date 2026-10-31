@@ -106,6 +106,30 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  // File menu (main/index.ts) just forwards clicks here - Open/Import reuse
+  // the exact same functions as their toolbar buttons. Save/Save As don't do
+  // anything real yet: there's no .sfz serializer in this app at all, so
+  // wiring them to a fake success would be worse than a visible stub.
+  useEffect(() => {
+    if (!window.api) return
+    const offImport = window.api.onMenuImport(() => setImportOpen(true))
+    const offOpen = window.api.onMenuOpen(() => {
+      openSfzFile()
+    })
+    const offSave = window.api.onMenuSave(() => {
+      console.log('[menu] save requested - not implemented yet (no .sfz serializer)')
+    })
+    const offSaveAs = window.api.onMenuSaveAs(() => {
+      console.log('[menu] save as requested - not implemented yet (no .sfz serializer)')
+    })
+    return () => {
+      offImport()
+      offOpen()
+      offSave()
+      offSaveAs()
+    }
+  }, [])
+
   useEffect(() => {
     if (!window.api) return
     let cancelled = false
@@ -139,22 +163,16 @@ export default function App(): React.JSX.Element {
         gap: '0.75rem'
       }}
     >
+      {/* Native title bar + menu bar now own the window chrome and close
+          button (see createWindow in main/index.ts) - this is just a
+          toolbar for the two actions that also exist as menu items. */}
       <div className="title-bar">
-        <h1 style={{ margin: 0 }}>subito sfz</h1>
         <div className="title-bar__actions">
           <button type="button" className="title-bar__open" onClick={openSfzFile}>
             open
           </button>
           <button type="button" className="title-bar__import" onClick={() => setImportOpen(true)}>
             import sf2/sf3
-          </button>
-          <button
-            type="button"
-            className="title-bar__close"
-            onClick={() => window.close()}
-            aria-label="Close"
-          >
-            ×
           </button>
         </div>
       </div>
