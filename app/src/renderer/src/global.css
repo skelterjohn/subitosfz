@@ -14,3 +14,33 @@ body,
      should always exactly match the viewport with no document scrollbar. */
   overflow: hidden;
 }
+
+/* Custom title bar, replacing the native frame (frame: false in main). */
+.title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  -webkit-app-region: drag;
+}
+
+.title-bar h1 {
+  -webkit-app-region: drag;
+}
+
+.title-bar__close {
+  -webkit-app-region: no-drag;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 56px;
+  height: 56px;
+  font-size: 2rem;
+  line-height: 1;
+  color: #666;
+  border-radius: 4px;
+}
+
+.title-bar__close:hover {
+  background: #e81123;
+  color: white;
+}

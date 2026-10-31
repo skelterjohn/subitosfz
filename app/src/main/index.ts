@@ -46,6 +46,7 @@ async function createWindow(): Promise<void> {
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
+    frame: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
