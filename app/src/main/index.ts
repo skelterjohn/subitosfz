@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu } from 'electron'
 import { join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
@@ -60,6 +60,8 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null)
+
   ipcMain.handle('get-server-port', () => serverPort)
   ipcMain.handle('get-start-time', () => appStartTime)
 
