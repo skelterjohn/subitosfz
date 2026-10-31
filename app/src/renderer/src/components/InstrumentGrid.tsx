@@ -1,5 +1,12 @@
 import { useMemo, useState } from 'react'
-import { axisValues, type Axis, type AxisValue, type CellRecord, type Instrument } from '../model/instrument'
+import {
+  axisValues,
+  midiToName,
+  type Axis,
+  type AxisValue,
+  type CellRecord,
+  type Instrument
+} from '../model/instrument'
 import { layoutForFixed } from '../model/views'
 import './InstrumentGrid.css'
 
@@ -200,7 +207,12 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
                 title={`${rowLabel} / ${colValues[cell.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - click to play`}
                 onClick={() => onPlayCell(cell)}
               >
-                {cell.takeCount}
+                {layout.rows === 'note' && (
+                  <span className="instrument-grid__cell-note">
+                    {midiToName(Number(cell.note))}
+                  </span>
+                )}
+                <span className="instrument-grid__cell-count">{cell.takeCount}</span>
               </div>
             )
           })}

@@ -92,6 +92,7 @@
   width: 100%;
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   border-right: 1px solid #e3e3e3;
@@ -105,6 +106,12 @@
   );
   color: #333;
   font-size: 0.8rem;
+  line-height: 1.15;
+}
+
+.instrument-grid__cell-note {
+  font-size: 0.65rem;
+  opacity: 0.9;
 }
 
 .instrument-grid__cell.is-filled {
