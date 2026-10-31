@@ -44,6 +44,12 @@ body,
   text-overflow: ellipsis;
 }
 
+.title-bar__sfz-error {
+  font-size: 0.75rem;
+  color: crimson;
+  white-space: nowrap;
+}
+
 .title-bar__actions {
   display: flex;
   align-items: center;

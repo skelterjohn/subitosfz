@@ -7,6 +7,7 @@ use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
 mod sf2;
+mod sfz_parse;
 
 #[derive(Serialize)]
 struct Health {
@@ -68,12 +69,26 @@ async fn sf2_export(
     .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }
 
+#[derive(Deserialize)]
+struct SfzParseRequest {
+    path: String,
+}
+
+async fn sfz_parse_handler(
+    Json(req): Json<SfzParseRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_parse::parse(&PathBuf::from(req.path))
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/sf2/presets", post(sf2_presets))
         .route("/sf2/export", post(sf2_export))
+        .route("/sfz/parse", post(sfz_parse_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

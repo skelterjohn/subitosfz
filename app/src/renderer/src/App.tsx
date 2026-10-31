@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import InstrumentGrid from './components/InstrumentGrid'
 import ImportSf2Modal from './components/ImportSf2Modal'
+import {
+  demoInstrument,
+  instrumentFromParsedSfz,
+  type Instrument,
+  type ParsedSfzResponse
+} from './model/instrument'
 
 interface HealthResponse {
   status: string
@@ -13,10 +19,39 @@ export default function App(): React.JSX.Element {
   const [startupMs, setStartupMs] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
+  const [instrument, setInstrument] = useState<Instrument>(() => demoInstrument())
+  const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
+  // Forces InstrumentGrid to remount only once a freshly-parsed instrument
+  // is actually ready, rather than keying off sfzFilePath directly - that
+  // would remount (and lazily re-init the grid's cell state) the moment the
+  // path is set, before the async parse resolves, locking the grid's cells
+  // onto whatever instrument was current at that premature mount.
+  const [loadGeneration, setLoadGeneration] = useState(0)
 
   async function openSfzFile(): Promise<void> {
     const path = await window.api.chooseSfzFile()
-    if (path) setSfzFilePath(path)
+    if (!path) return
+
+    setSfzFilePath(path)
+    setSfzLoadError(null)
+
+    try {
+      const port = await window.api.getServerPort()
+      const res = await fetch(`http://127.0.0.1:${port}/sfz/parse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `request failed (${res.status})`)
+      }
+      const parsed = (await res.json()) as ParsedSfzResponse
+      setInstrument(instrumentFromParsedSfz(parsed))
+      setLoadGeneration((g) => g + 1)
+    } catch (err) {
+      setSfzLoadError(String(err))
+    }
   }
 
   // Measured on first render of this screen, independent of sidecar status,
@@ -87,12 +122,15 @@ export default function App(): React.JSX.Element {
       {sfzFilePath && (
         <div className="open-row">
           <span className="title-bar__sfz-path">{sfzFilePath}</span>
+          {sfzLoadError && (
+            <span className="title-bar__sfz-error">failed to load: {sfzLoadError}</span>
+          )}
         </div>
       )}
 
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
 
-      <InstrumentGrid />
+      <InstrumentGrid key={loadGeneration} instrument={instrument} />
 
       <div style={{ color: '#888', fontSize: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.4rem' }}>
         {startupMs === null ? 'Measuring startup time…' : `Ready in ${startupMs}ms`}

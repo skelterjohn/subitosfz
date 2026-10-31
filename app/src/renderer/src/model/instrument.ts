@@ -1,6 +1,5 @@
 // Core data model for the instrument grid: note x articulation x velocity
-// layer, as described in docs/design.md. This is placeholder in-memory data
-// for UI development - no persistence or real recordings wired up yet.
+// layer, as described in docs/design.md.
 
 export type Axis = 'note' | 'articulation' | 'velocity'
 
@@ -17,38 +16,6 @@ export function midiToName(midi: number): string {
   return `${name}${octave}`
 }
 
-// E2 (40) to E6 (88): a reasonable default range covering standard guitar
-// plus headroom for high harmonics. Easy to make configurable per-instrument
-// later.
-const LOW_MIDI = 40
-const HIGH_MIDI = 88
-
-export const NOTE_AXIS: AxisValue[] = Array.from(
-  { length: HIGH_MIDI - LOW_MIDI + 1 },
-  (_, i) => {
-    const midi = LOW_MIDI + i
-    return { id: String(midi), label: midiToName(midi) }
-  }
-).reverse() // high to low, so the grid reads top-to-bottom like a keyboard
-
-export const ARTICULATION_AXIS: AxisValue[] = ['normal', 'pizzicato', 'harmonics'].map((a) => ({
-  id: a,
-  label: a
-}))
-
-export const VELOCITY_AXIS: AxisValue[] = ['soft', 'loud'].map((v) => ({ id: v, label: v }))
-
-export function axisValues(axis: Axis): AxisValue[] {
-  switch (axis) {
-    case 'note':
-      return NOTE_AXIS
-    case 'articulation':
-      return ARTICULATION_AXIS
-    case 'velocity':
-      return VELOCITY_AXIS
-  }
-}
-
 export interface CellCoordinate {
   note: string
   articulation: string
@@ -60,18 +27,53 @@ export function cellKey(coord: CellCoordinate): string {
 }
 
 export interface CellData {
-  // Round-robin take count. Real takes (audio + loudness measurement) come
-  // later; for now this is just enough to distinguish "has recordings" from
-  // "empty" in the UI.
+  // Round-robin take count - for a loaded file, the number of regions that
+  // mapped to this (note, articulation, velocity) combination.
   takeCount: number
 }
 
 export type CellStore = Map<string, CellData>
 
-// A handful of pre-filled cells purely so the grid has something to look at
-// while the UI is being built - not meant to represent a real instrument.
-export function seedDemoCells(): CellStore {
-  const store: CellStore = new Map()
+// Everything the grid needs to render: the three axes' actual values, and
+// the cell data keyed against them.
+export interface Instrument {
+  noteAxis: AxisValue[]
+  articulationAxis: AxisValue[]
+  velocityAxis: AxisValue[]
+  cells: CellStore
+}
+
+export function axisValues(instrument: Instrument, axis: Axis): AxisValue[] {
+  switch (axis) {
+    case 'note':
+      return instrument.noteAxis
+    case 'articulation':
+      return instrument.articulationAxis
+    case 'velocity':
+      return instrument.velocityAxis
+  }
+}
+
+// Placeholder instrument shown before any real .sfz is opened - a full
+// chromatic range with a few demo cells, purely for UI development.
+export function demoInstrument(): Instrument {
+  const LOW_MIDI = 40
+  const HIGH_MIDI = 88
+  const noteAxis: AxisValue[] = Array.from(
+    { length: HIGH_MIDI - LOW_MIDI + 1 },
+    (_, i) => {
+      const midi = LOW_MIDI + i
+      return { id: String(midi), label: midiToName(midi) }
+    }
+  ).reverse() // high to low, so the grid reads top-to-bottom like a keyboard
+
+  const articulationAxis: AxisValue[] = ['normal', 'pizzicato', 'harmonics'].map((a) => ({
+    id: a,
+    label: a
+  }))
+  const velocityAxis: AxisValue[] = ['soft', 'loud'].map((v) => ({ id: v, label: v }))
+
+  const cells: CellStore = new Map()
   const seeds: Array<[number, string, string, number]> = [
     [76, 'normal', 'soft', 2],
     [76, 'normal', 'loud', 3],
@@ -83,7 +85,46 @@ export function seedDemoCells(): CellStore {
     [67, 'normal', 'loud', 1]
   ]
   for (const [midi, articulation, velocity, takeCount] of seeds) {
-    store.set(cellKey({ note: String(midi), articulation, velocity }), { takeCount })
+    cells.set(cellKey({ note: String(midi), articulation, velocity }), { takeCount })
   }
-  return store
+
+  return { noteAxis, articulationAxis, velocityAxis, cells }
+}
+
+// Shape returned by POST /sfz/parse.
+export interface ParsedSfzResponse {
+  notes: number[]
+  articulations: Array<{ id: string; label: string }>
+  velocities: Array<{ lovel: number; hivel: number }>
+  cells: Array<{ note: number; articulation: string; velocityIndex: number; takeCount: number }>
+}
+
+export function instrumentFromParsedSfz(parsed: ParsedSfzResponse): Instrument {
+  const noteAxis: AxisValue[] = [...parsed.notes]
+    .sort((a, b) => b - a) // high to low, matching demoInstrument's convention
+    .map((midi) => ({ id: String(midi), label: midiToName(midi) }))
+
+  const articulationAxis: AxisValue[] = parsed.articulations.map((a) => ({
+    id: a.id,
+    label: a.label
+  }))
+
+  const velocityAxis: AxisValue[] = parsed.velocities.map((v, i) => ({
+    id: String(i),
+    label: `${v.lovel}-${v.hivel}`
+  }))
+
+  const cells: CellStore = new Map()
+  for (const c of parsed.cells) {
+    cells.set(
+      cellKey({
+        note: String(c.note),
+        articulation: c.articulation,
+        velocity: String(c.velocityIndex)
+      }),
+      { takeCount: c.takeCount }
+    )
+  }
+
+  return { noteAxis, articulationAxis, velocityAxis, cells }
 }

@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react'
 import {
   axisValues,
   cellKey,
-  seedDemoCells,
   type Axis,
   type AxisValue,
-  type CellStore
+  type CellStore,
+  type Instrument
 } from '../model/instrument'
 import { layoutForFixed, resolveCoordinate } from '../model/views'
 import './InstrumentGrid.css'
@@ -16,22 +16,29 @@ const AXIS_LABEL: Record<Axis, string> = {
   velocity: 'velocity'
 }
 
-export default function InstrumentGrid(): React.JSX.Element {
+interface Props {
+  instrument: Instrument
+}
+
+export default function InstrumentGrid({ instrument }: Props): React.JSX.Element {
   // The layout (which axis is rows/cols/fixed) is entirely derived from
   // which axis is currently pinned - see layoutForFixed - so there's no
   // path-dependent state to get out of sync with the canonical axis order.
   const [fixedAxis, setFixedAxis] = useState<Axis>('velocity')
   const [fixedValues, setFixedValues] = useState<Record<Axis, string>>(() => ({
-    note: axisValues('note')[0].id,
-    articulation: axisValues('articulation')[0].id,
-    velocity: axisValues('velocity')[0].id
+    note: axisValues(instrument, 'note')[0].id,
+    articulation: axisValues(instrument, 'articulation')[0].id,
+    velocity: axisValues(instrument, 'velocity')[0].id
   }))
-  const [cells, setCells] = useState<CellStore>(() => seedDemoCells())
+  const [cells, setCells] = useState<CellStore>(() => instrument.cells)
 
   const layout = useMemo(() => layoutForFixed(fixedAxis), [fixedAxis])
-  const rowValues = useMemo(() => axisValues(layout.rows), [layout.rows])
-  const colValues = useMemo(() => axisValues(layout.cols), [layout.cols])
-  const fixedAxisValues = useMemo(() => axisValues(layout.fixed), [layout.fixed])
+  const rowValues = useMemo(() => axisValues(instrument, layout.rows), [instrument, layout.rows])
+  const colValues = useMemo(() => axisValues(instrument, layout.cols), [instrument, layout.cols])
+  const fixedAxisValues = useMemo(
+    () => axisValues(instrument, layout.fixed),
+    [instrument, layout.fixed]
+  )
   const fixedId = fixedValues[layout.fixed]
 
   function setFixedValue(id: string): void {
