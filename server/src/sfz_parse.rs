@@ -41,8 +41,6 @@ pub struct ArticulationInfo {
 pub struct CellInfo {
     pub note: u8,
     pub articulation: String,
-    #[serde(rename = "takeCount")]
-    pub take_count: usize,
     #[serde(rename = "loKey")]
     pub lo_key: u8,
     #[serde(rename = "hiKey")]
@@ -51,11 +49,10 @@ pub struct CellInfo {
     pub lo_vel: u8,
     #[serde(rename = "hiVel")]
     pub hi_vel: u8,
-    // One representative sample for playback - the first take encountered,
-    // not an exhaustive list. Fine for "click a cell to hear roughly what's
-    // there"; real per-take playback is its own future UI.
-    #[serde(rename = "samplePath")]
-    pub sample_path: String,
+    // One path per distinct recorded sound (round-robin/random-slot take, or
+    // a stereo-split region pair counted once) in this cell - the actual
+    // files behind the count, not just a number.
+    pub samples: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -292,7 +289,11 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     type CellKey = (u8, String, u8, u8);
     let mut cell_sounds: BTreeMap<CellKey, BTreeSet<SoundIdentity>> = BTreeMap::new();
     let mut cell_key_ranges: BTreeMap<CellKey, (u8, u8)> = BTreeMap::new();
-    let mut cell_samples: BTreeMap<CellKey, String> = BTreeMap::new();
+    // One sample path per (cell, distinct sound) - the first region's sample
+    // encountered for that exact sound identity. A stereo pair's two regions
+    // share an identity, so only the first of the pair's paths is kept here;
+    // that's still a real, playable file, just not both channels.
+    let mut sound_samples: BTreeMap<(CellKey, SoundIdentity), String> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -302,11 +303,12 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         let lovel = region.get("lovel").and_then(|v| v.parse::<u8>().ok()).unwrap_or(0);
         let hivel = region.get("hivel").and_then(|v| v.parse::<u8>().ok()).unwrap_or(127);
         let key: CellKey = (note, articulation_id, lovel, hivel);
+        let identity = sound_identity(region);
 
         cell_sounds
             .entry(key.clone())
             .or_default()
-            .insert(sound_identity(region));
+            .insert(identity.clone());
 
         if let Some((lo, hi)) = region_key_range(region) {
             cell_key_ranges
@@ -319,30 +321,29 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         }
 
         if let Some(sample) = region.get("sample") {
-            cell_samples.entry(key).or_insert_with(|| sample.clone());
+            sound_samples
+                .entry((key, identity))
+                .or_insert_with(|| sample.clone());
         }
     }
 
     let cells = cell_sounds
         .into_iter()
         .map(|((note, articulation, lovel, hivel), sounds)| {
-            let (lo_key, hi_key) = cell_key_ranges
-                .get(&(note, articulation.clone(), lovel, hivel))
-                .copied()
-                .unwrap_or((note, note));
-            let sample_path = cell_samples
-                .get(&(note, articulation.clone(), lovel, hivel))
-                .cloned()
-                .unwrap_or_default();
+            let key: CellKey = (note, articulation.clone(), lovel, hivel);
+            let (lo_key, hi_key) = cell_key_ranges.get(&key).copied().unwrap_or((note, note));
+            let samples = sounds
+                .into_iter()
+                .filter_map(|identity| sound_samples.get(&(key.clone(), identity)).cloned())
+                .collect();
             CellInfo {
                 note,
                 articulation,
-                take_count: sounds.len(),
                 lo_key,
                 hi_key,
                 lo_vel: lovel,
                 hi_vel: hivel,
-                sample_path,
+                samples,
             }
         })
         .collect();

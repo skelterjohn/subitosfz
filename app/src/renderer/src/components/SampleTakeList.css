@@ -1,0 +1,80 @@
+/* No border of its own - shares the outline of .sample-panel (App.tsx) with
+   SampleEditorPanel above it. */
+.sample-take-list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.sample-take-list__empty {
+  padding: 1rem;
+  text-align: center;
+  color: #999;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+/* Each actual sample file gets its own outline - the real, individually
+   verifiable thing a "take" used to just be a trusted count of. */
+.sample-take-list__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.sample-take-list__row + .sample-take-list__row {
+  margin-top: 0.5rem;
+}
+
+.sample-take-list__play {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  background: #4a7fd9;
+  color: white;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.sample-take-list__play:hover {
+  background: #3a6bc0;
+}
+
+.sample-take-list__name {
+  flex: 0 0 160px;
+  min-width: 0;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sample-take-list__waveform {
+  flex: 1;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sample-take-list__status {
+  font-size: 0.75rem;
+  color: #999;
+  font-style: italic;
+}
+
+.sample-take-list__svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sample-take-list__svg rect {
+  fill: #4a7fd9;
+}

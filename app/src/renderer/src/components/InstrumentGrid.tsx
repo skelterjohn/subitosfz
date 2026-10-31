@@ -19,7 +19,8 @@ const AXIS_LABEL: Record<Axis, string> = {
 
 interface Props {
   instrument: Instrument
-  onPlayCell: (cell: CellRecord) => void
+  selectedCell: CellRecord | null
+  onSelectCell: (cell: CellRecord) => void
 }
 
 // A row or column on screen. For a range axis (note/velocity) this is a
@@ -107,7 +108,11 @@ interface Block {
   matches: CellRecord[]
 }
 
-export default function InstrumentGrid({ instrument, onPlayCell }: Props): React.JSX.Element {
+export default function InstrumentGrid({
+  instrument,
+  selectedCell,
+  onSelectCell
+}: Props): React.JSX.Element {
   // The layout (which axis is rows/cols/fixed) is entirely derived from
   // which axis is currently pinned - see layoutForFixed - so there's no
   // path-dependent state to get out of sync with the canonical axis order.
@@ -292,13 +297,14 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
                 : `${displayRows[block.rowStart]?.label}–${displayRows[block.rowEnd]?.label}`
             const isOverlap = block.matches.length > 1
             const cell = block.matches[0]
+            const isSelected = !isOverlap && cell === selectedCell
             return (
               <div
                 key={i}
                 className={
                   isOverlap
                     ? 'instrument-grid__cell is-overlap'
-                    : 'instrument-grid__cell is-filled'
+                    : `instrument-grid__cell is-filled${isSelected ? ' is-selected' : ''}`
                 }
                 style={{
                   gridColumn: block.colIndex + 2,
@@ -307,9 +313,9 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
                 title={
                   isOverlap
                     ? `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - ${block.matches.length} overlapping sounds claim this range`
-                    : `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - anchor ${midiToName(Number(cell.note))} - click to play`
+                    : `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - anchor ${midiToName(Number(cell.note))} - click to select`
                 }
-                onClick={() => onPlayCell(cell)}
+                onClick={() => onSelectCell(cell)}
               >
                 {isOverlap ? (
                   <span className="instrument-grid__cell-count">!</span>
@@ -323,7 +329,7 @@ export default function InstrumentGrid({ instrument, onPlayCell }: Props): React
                     <span className="instrument-grid__cell-note">
                       {midiToName(Number(cell.note))}
                     </span>
-                    <span className="instrument-grid__cell-count">{cell.takeCount}</span>
+                    <span className="instrument-grid__cell-count">{cell.samples.length}</span>
                   </>
                 )}
               </div>

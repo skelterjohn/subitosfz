@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import InstrumentGrid from './components/InstrumentGrid'
 import ImportSf2Modal from './components/ImportSf2Modal'
+import SampleEditorPanel from './components/SampleEditorPanel'
+import SampleTakeList from './components/SampleTakeList'
 import {
   emptyInstrument,
   instrumentFromParsedSfz,
@@ -22,6 +24,7 @@ export default function App(): React.JSX.Element {
   const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
   const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
+  const [selectedCell, setSelectedCell] = useState<CellRecord | null>(null)
   // Forces InstrumentGrid to remount only once a freshly-parsed instrument
   // is actually ready, rather than keying off sfzFilePath directly - that
   // would remount (and lazily re-init the grid's cell state) the moment the
@@ -49,17 +52,18 @@ export default function App(): React.JSX.Element {
       }
       const parsed = (await res.json()) as ParsedSfzResponse
       setInstrument(instrumentFromParsedSfz(parsed))
+      setSelectedCell(null)
       setLoadGeneration((g) => g + 1)
     } catch (err) {
       setSfzLoadError(String(err))
     }
   }
 
-  async function playCell(cell: CellRecord): Promise<void> {
-    if (!sfzFilePath || !cell.samplePath) return
+  async function playSample(samplePath: string): Promise<void> {
+    if (!sfzFilePath || !samplePath) return
     try {
-      const bytes = await window.api.readAudioFile(sfzFilePath, cell.samplePath)
-      const ext = cell.samplePath.split('.').pop()?.toLowerCase()
+      const bytes = await window.api.readAudioFile(sfzFilePath, samplePath)
+      const ext = samplePath.split('.').pop()?.toLowerCase()
       const mime = ext === 'ogg' ? 'audio/ogg' : 'audio/wav'
       // IPC always hands back a real ArrayBuffer (never SharedArrayBuffer),
       // but TS's generic Uint8Array<ArrayBufferLike> type doesn't guarantee
@@ -149,7 +153,35 @@ export default function App(): React.JSX.Element {
 
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
 
-      <InstrumentGrid key={loadGeneration} instrument={instrument} onPlayCell={playCell} />
+      <div style={{ display: 'flex', gap: '0.75rem', flex: 1, minHeight: 0 }}>
+        <InstrumentGrid
+          key={loadGeneration}
+          instrument={instrument}
+          selectedCell={selectedCell}
+          onSelectCell={setSelectedCell}
+        />
+        <div
+          style={{
+            flex: '1 1 0',
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.75rem'
+          }}
+        >
+          {/* Matches InstrumentGrid's own toolbar row in height (same class,
+              hidden) purely so the bordered boxes below - grid scroll area
+              vs. sample editor - start at the same y, with no pivot control
+              of its own to put there. */}
+          <div className="instrument-grid__toolbar" style={{ visibility: 'hidden' }}>
+            <span className="instrument-grid__pivot-label">placeholder</span>
+          </div>
+          <div className="sample-panel">
+            <SampleEditorPanel cell={selectedCell} />
+            <SampleTakeList cell={selectedCell} sfzFilePath={sfzFilePath} onPlay={playSample} />
+          </div>
+        </div>
+      </div>
 
       <div style={{ color: '#888', fontSize: '0.75rem', borderTop: '1px solid #eee', paddingTop: '0.4rem' }}>
         {startupMs === null ? 'Measuring startup time…' : `Ready in ${startupMs}ms`}

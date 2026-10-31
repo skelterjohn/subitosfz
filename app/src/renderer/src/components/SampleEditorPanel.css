@@ -1,0 +1,52 @@
+/* No border of its own - it shares the outline of .sample-panel (App.tsx)
+   with SampleTakeList below it, separated only by a divider. */
+.sample-editor {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.sample-editor__empty {
+  text-align: center;
+  color: #999;
+  font-style: italic;
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+}
+
+.sample-editor__fields {
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.sample-editor__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+/* Lowercase, monospace - these are literal SFZ opcode names straight out of
+   the file, not display labels, so they shouldn't be re-cased. */
+.sample-editor__label {
+  color: #888;
+  font-size: 0.75rem;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.sample-editor__value {
+  font-weight: 600;
+  text-align: right;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

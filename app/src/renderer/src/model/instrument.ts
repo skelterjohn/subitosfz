@@ -40,10 +40,11 @@ export interface CellRecord {
   hiKey: number
   loVel: number
   hiVel: number
-  takeCount: number
-  // Path to one representative take, relative to the .sfz file's own
-  // directory (same convention the file itself uses for sample=).
-  samplePath: string
+  // One path per distinct recorded sound (take) in this cell, relative to
+  // the .sfz file's own directory (same convention the file itself uses for
+  // sample=). Length is the real take count - no separate count field to
+  // keep in sync with it.
+  samples: string[]
 }
 
 export function cellRange(cell: CellRecord, axis: RangeAxis): [number, number] {
@@ -86,12 +87,11 @@ export interface ParsedSfzResponse {
   cells: Array<{
     note: number
     articulation: string
-    takeCount: number
     loKey: number
     hiKey: number
     loVel: number
     hiVel: number
-    samplePath: string
+    samples: string[]
   }>
 }
 
@@ -119,8 +119,7 @@ export function instrumentFromParsedSfz(parsed: ParsedSfzResponse): Instrument {
     hiKey: c.hiKey,
     loVel: c.loVel,
     hiVel: c.hiVel,
-    takeCount: c.takeCount,
-    samplePath: c.samplePath
+    samples: c.samples
   }))
 
   return { noteAxis, articulationAxis, velocityAxis, cells }
