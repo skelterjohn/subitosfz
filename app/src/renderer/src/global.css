@@ -27,12 +27,30 @@ body,
   -webkit-app-region: drag;
 }
 
+.open-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.title-bar__sfz-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .title-bar__actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
+.title-bar__open,
 .title-bar__import {
   -webkit-app-region: no-drag;
   cursor: pointer;

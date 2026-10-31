@@ -16,6 +16,7 @@ let mainWindow: BrowserWindow | null = null
 interface ImportDirs {
   lastSf2Dir?: string
   lastDestDir?: string
+  lastSfzDir?: string
 }
 
 function importDirsPath(): string {
@@ -118,6 +119,21 @@ app.whenReady().then(async () => {
     if (result.canceled) return null
     const filePath = result.filePaths[0]
     saveImportDirs({ ...dirs, lastSf2Dir: dirname(filePath) })
+    return filePath
+  })
+
+  ipcMain.handle('choose-sfz-file', async () => {
+    if (!mainWindow) return null
+    const dirs = loadImportDirs()
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open an SFZ file',
+      defaultPath: dirs.lastSfzDir,
+      properties: ['openFile'],
+      filters: [{ name: 'SFZ', extensions: ['sfz'] }]
+    })
+    if (result.canceled) return null
+    const filePath = result.filePaths[0]
+    saveImportDirs({ ...dirs, lastSfzDir: dirname(filePath) })
     return filePath
   })
 

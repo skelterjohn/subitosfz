@@ -12,6 +12,12 @@ export default function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [startupMs, setStartupMs] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
+
+  async function openSfzFile(): Promise<void> {
+    const path = await window.api.chooseSfzFile()
+    if (path) setSfzFilePath(path)
+  }
 
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
@@ -61,6 +67,9 @@ export default function App(): React.JSX.Element {
       <div className="title-bar">
         <h1 style={{ margin: 0 }}>subito sfz</h1>
         <div className="title-bar__actions">
+          <button type="button" className="title-bar__open" onClick={openSfzFile}>
+            open
+          </button>
           <button type="button" className="title-bar__import" onClick={() => setImportOpen(true)}>
             import sf2/sf3
           </button>
@@ -74,6 +83,12 @@ export default function App(): React.JSX.Element {
           </button>
         </div>
       </div>
+
+      {sfzFilePath && (
+        <div className="open-row">
+          <span className="title-bar__sfz-path">{sfzFilePath}</span>
+        </div>
+      )}
 
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
 
