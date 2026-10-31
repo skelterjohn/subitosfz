@@ -124,3 +124,17 @@
 .instrument-grid__cell.is-filled:hover {
   background: #3a6bc0;
 }
+
+/* Two or more cells both claim this exact span - genuinely ambiguous
+   (SFZ would play all of them simultaneously), flagged rather than
+   arbitrarily picking one to display as if it were normal. */
+.instrument-grid__cell.is-overlap {
+  background: #d9403f;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.instrument-grid__cell.is-overlap:hover {
+  background: #b7322f;
+}
