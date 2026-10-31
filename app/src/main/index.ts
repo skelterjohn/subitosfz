@@ -40,6 +40,30 @@ function saveImportDirs(dirs: ImportDirs): void {
   }
 }
 
+interface LastSession {
+  sfzFilePath?: string
+}
+
+function lastSessionPath(): string {
+  return join(app.getPath('userData'), 'last-session.json')
+}
+
+function loadLastSession(): LastSession {
+  try {
+    return JSON.parse(readFileSync(lastSessionPath(), 'utf-8'))
+  } catch {
+    return {}
+  }
+}
+
+function saveLastSession(session: LastSession): void {
+  try {
+    writeFileSync(lastSessionPath(), JSON.stringify(session))
+  } catch (err) {
+    console.error('[main] failed to save last-session.json:', err)
+  }
+}
+
 function sidecarBinaryPath(): string {
   const binName = process.platform === 'win32' ? 'subitosfz-server.exe' : 'subitosfz-server'
   if (app.isPackaged) {
@@ -136,6 +160,12 @@ app.whenReady().then(async () => {
     const filePath = result.filePaths[0]
     saveImportDirs({ ...dirs, lastSfzDir: dirname(filePath) })
     return filePath
+  })
+
+  ipcMain.handle('get-last-sfz-file', () => loadLastSession().sfzFilePath ?? null)
+
+  ipcMain.handle('set-last-sfz-file', (_event, filePath: string | null) => {
+    saveLastSession({ sfzFilePath: filePath ?? undefined })
   })
 
   ipcMain.handle('read-audio-file', async (_event, sfzFilePath: string, relativeSamplePath: string) => {

@@ -10,6 +10,8 @@ declare global {
       chooseSf2File: () => Promise<string | null>
       chooseDirectory: () => Promise<string | null>
       chooseSfzFile: () => Promise<string | null>
+      getLastSfzFile: () => Promise<string | null>
+      setLastSfzFile: (filePath: string | null) => Promise<void>
       readAudioFile: (sfzFilePath: string, relativeSamplePath: string) => Promise<Uint8Array>
     }
   }

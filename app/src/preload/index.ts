@@ -6,6 +6,9 @@ const api = {
   chooseSf2File: (): Promise<string | null> => ipcRenderer.invoke('choose-sf2-file'),
   chooseDirectory: (): Promise<string | null> => ipcRenderer.invoke('choose-directory'),
   chooseSfzFile: (): Promise<string | null> => ipcRenderer.invoke('choose-sfz-file'),
+  getLastSfzFile: (): Promise<string | null> => ipcRenderer.invoke('get-last-sfz-file'),
+  setLastSfzFile: (filePath: string | null): Promise<void> =>
+    ipcRenderer.invoke('set-last-sfz-file', filePath),
   readAudioFile: (sfzFilePath: string, relativeSamplePath: string): Promise<Uint8Array> =>
     ipcRenderer.invoke('read-audio-file', sfzFilePath, relativeSamplePath)
 }

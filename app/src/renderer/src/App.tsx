@@ -32,10 +32,9 @@ export default function App(): React.JSX.Element {
   // onto whatever instrument was current at that premature mount.
   const [loadGeneration, setLoadGeneration] = useState(0)
 
-  async function openSfzFile(): Promise<void> {
-    const path = await window.api.chooseSfzFile()
-    if (!path) return
-
+  // Shared by the "open" button and the startup auto-reload - only the
+  // source of the path differs between them.
+  async function loadSfzFile(path: string): Promise<void> {
     setSfzFilePath(path)
     setSfzLoadError(null)
 
@@ -54,9 +53,18 @@ export default function App(): React.JSX.Element {
       setInstrument(instrumentFromParsedSfz(parsed))
       setSelectedCell(null)
       setLoadGeneration((g) => g + 1)
+      // Only cache on success - caching a path that fails to parse would
+      // just repeat the same failure on every future startup.
+      window.api.setLastSfzFile(path)
     } catch (err) {
       setSfzLoadError(String(err))
     }
+  }
+
+  async function openSfzFile(): Promise<void> {
+    const path = await window.api.chooseSfzFile()
+    if (!path) return
+    await loadSfzFile(path)
   }
 
   async function playSample(samplePath: string): Promise<void> {
@@ -86,6 +94,15 @@ export default function App(): React.JSX.Element {
     }
     window.api.getStartTime().then((startTime) => {
       setStartupMs(Math.round(Date.now() - startTime))
+    })
+  }, [])
+
+  // Reopen whatever .sfz was last successfully loaded, so the grid isn't
+  // empty on every fresh launch.
+  useEffect(() => {
+    if (!window.api) return
+    window.api.getLastSfzFile().then((path) => {
+      if (path) loadSfzFile(path)
     })
   }, [])
 
