@@ -49,7 +49,7 @@ export default function App(): React.JSX.Element {
       style={{
         fontFamily: 'sans-serif',
         padding: '1.25rem',
-        height: '100vh',
+        height: '100%',
         boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
