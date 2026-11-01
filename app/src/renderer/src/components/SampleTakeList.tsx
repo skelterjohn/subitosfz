@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { CellRecord } from '../model/instrument'
+import type { CellRecord, TakeInfo } from '../model/instrument'
 import './SampleTakeList.css'
 
 interface Props {
@@ -23,12 +23,12 @@ export default function SampleTakeList({ cell, sfzFilePath, onPlay }: Props): Re
 
   return (
     <div className="sample-take-list">
-      {cell.samples.map((samplePath, i) => (
+      {cell.samples.map((take, i) => (
         <TakeRow
-          key={`${samplePath}-${i}`}
+          key={`${take.samplePath}-${i}`}
           sfzFilePath={sfzFilePath}
-          samplePath={samplePath}
-          onPlay={() => onPlay(samplePath)}
+          take={take}
+          onPlay={() => onPlay(take.samplePath)}
         />
       ))}
     </div>
@@ -37,13 +37,15 @@ export default function SampleTakeList({ cell, sfzFilePath, onPlay }: Props): Re
 
 interface TakeRowProps {
   sfzFilePath: string | null
-  samplePath: string
+  take: TakeInfo
   onPlay: () => void
 }
 
-function TakeRow({ sfzFilePath, samplePath, onPlay }: TakeRowProps): React.JSX.Element {
+function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element {
   const [peaks, setPeaks] = useState<number[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [opcodesOpen, setOpcodesOpen] = useState(false)
+  const samplePath = take.samplePath
 
   useEffect(() => {
     let cancelled = false
@@ -79,18 +81,38 @@ function TakeRow({ sfzFilePath, samplePath, onPlay }: TakeRowProps): React.JSX.E
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
 
   return (
-    <div className="sample-take-list__row">
-      <button type="button" className="sample-take-list__play" onClick={onPlay}>
-        ▶
-      </button>
-      <span className="sample-take-list__name" title={samplePath}>
-        {fileName}
-      </span>
-      <div className="sample-take-list__waveform">
-        {error && <span className="sample-take-list__status">failed to load</span>}
-        {!error && !peaks && <span className="sample-take-list__status">loading…</span>}
-        {!error && peaks && <Waveform peaks={peaks} />}
+    <div className="sample-take-list__item">
+      <div className="sample-take-list__row">
+        <button type="button" className="sample-take-list__play" onClick={onPlay}>
+          ▶
+        </button>
+        <span className="sample-take-list__name" title={samplePath}>
+          {fileName}
+        </span>
+        <div className="sample-take-list__waveform">
+          {error && <span className="sample-take-list__status">failed to load</span>}
+          {!error && !peaks && <span className="sample-take-list__status">loading…</span>}
+          {!error && peaks && <Waveform peaks={peaks} />}
+        </div>
+        <button
+          type="button"
+          className="sample-take-list__toggle"
+          onClick={() => setOpcodesOpen((v) => !v)}
+          aria-label={opcodesOpen ? 'Hide opcodes' : 'Show opcodes'}
+        >
+          {opcodesOpen ? '▾' : '▸'}
+        </button>
       </div>
+      {opcodesOpen && (
+        <div className="sample-take-list__opcodes">
+          {take.opcodes.map((op) => (
+            <div className="sample-take-list__opcode" key={op.name}>
+              <span className="sample-take-list__opcode-name">{op.name}</span>
+              <span className="sample-take-list__opcode-value">{op.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

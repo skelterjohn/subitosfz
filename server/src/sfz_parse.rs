@@ -38,6 +38,25 @@ pub struct ArticulationInfo {
 }
 
 #[derive(Serialize)]
+pub struct OpcodeEntry {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Serialize)]
+pub struct TakeInfo {
+    #[serde(rename = "samplePath")]
+    pub sample_path: String,
+    // Every opcode literally present on this region after global/master/
+    // group cascading - whatever the file actually has, not a hand-picked
+    // subset. The app only needs a small fixed set (note/key/vel range,
+    // articulation) to drive the grid itself, but there's no reason the
+    // *display* should be limited to those when SFZ has hundreds of
+    // possible opcodes (envelopes, filters, pan, tuning, loop points...).
+    pub opcodes: Vec<OpcodeEntry>,
+}
+
+#[derive(Serialize)]
 pub struct CellInfo {
     pub note: u8,
     pub articulation: String,
@@ -49,10 +68,9 @@ pub struct CellInfo {
     pub lo_vel: u8,
     #[serde(rename = "hiVel")]
     pub hi_vel: u8,
-    // One path per distinct recorded sound (round-robin/random-slot take, or
-    // a stereo-split region pair counted once) in this cell - the actual
-    // files behind the count, not just a number.
-    pub samples: Vec<String>,
+    // One entry per distinct recorded sound (round-robin/random-slot take,
+    // or a stereo-split region pair counted once) in this cell.
+    pub samples: Vec<TakeInfo>,
 }
 
 #[derive(Serialize)]
@@ -289,11 +307,12 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     type CellKey = (u8, String, u8, u8);
     let mut cell_sounds: BTreeMap<CellKey, BTreeSet<SoundIdentity>> = BTreeMap::new();
     let mut cell_key_ranges: BTreeMap<CellKey, (u8, u8)> = BTreeMap::new();
-    // One sample path per (cell, distinct sound) - the first region's sample
-    // encountered for that exact sound identity. A stereo pair's two regions
-    // share an identity, so only the first of the pair's paths is kept here;
-    // that's still a real, playable file, just not both channels.
-    let mut sound_samples: BTreeMap<(CellKey, SoundIdentity), String> = BTreeMap::new();
+    // The full cascaded opcode map per (cell, distinct sound) - the first
+    // region encountered for that exact sound identity. A stereo pair's two
+    // regions share an identity, so only the first of the pair's maps is
+    // kept here; that's still one real, playable region, just not both
+    // channels.
+    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), OpcodeMap> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -320,10 +339,10 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
                 .or_insert((lo, hi));
         }
 
-        if let Some(sample) = region.get("sample") {
-            sound_samples
+        if region.contains_key("sample") {
+            sound_regions
                 .entry((key, identity))
-                .or_insert_with(|| sample.clone());
+                .or_insert_with(|| region.clone());
         }
     }
 
@@ -334,7 +353,18 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
             let (lo_key, hi_key) = cell_key_ranges.get(&key).copied().unwrap_or((note, note));
             let samples = sounds
                 .into_iter()
-                .filter_map(|identity| sound_samples.get(&(key.clone(), identity)).cloned())
+                .filter_map(|identity| {
+                    let region = sound_regions.get(&(key.clone(), identity))?;
+                    let sample_path = region.get("sample")?.clone();
+                    let opcodes = region
+                        .iter()
+                        .map(|(name, value)| OpcodeEntry {
+                            name: name.clone(),
+                            value: value.clone()
+                        })
+                        .collect();
+                    Some(TakeInfo { sample_path, opcodes })
+                })
                 .collect();
             CellInfo {
                 note,

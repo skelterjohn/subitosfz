@@ -25,6 +25,24 @@ export function midiToName(midi: number): string {
   return `${name}${octave}`
 }
 
+// A single opcode as it literally appears in the file (after global/master/
+// group cascading) - name and value are exactly the parsed text, not
+// reinterpreted. There's no fixed opcode whitelist: SFZ has hundreds of
+// possible opcodes, so a take carries whatever its region actually has.
+export interface OpcodeEntry {
+  name: string
+  value: string
+}
+
+// One distinct recorded sound (round-robin/random-slot take, or a
+// stereo-split region pair counted once) within a cell.
+export interface TakeInfo {
+  // Relative to the .sfz file's own directory (same convention the file
+  // itself uses for sample=).
+  samplePath: string
+  opcodes: OpcodeEntry[]
+}
+
 // One recorded sound. loKey/hiKey and loVel/hiVel are the full key and
 // velocity ranges it covers (what the grid stretches/matches it across);
 // note is just its recorded anchor pitch - loKey <= note <= hiKey in
@@ -40,11 +58,9 @@ export interface CellRecord {
   hiKey: number
   loVel: number
   hiVel: number
-  // One path per distinct recorded sound (take) in this cell, relative to
-  // the .sfz file's own directory (same convention the file itself uses for
-  // sample=). Length is the real take count - no separate count field to
-  // keep in sync with it.
-  samples: string[]
+  // One entry per distinct recorded sound (take) in this cell. Length is
+  // the real take count - no separate count field to keep in sync with it.
+  samples: TakeInfo[]
 }
 
 export function cellRange(cell: CellRecord, axis: RangeAxis): [number, number] {
@@ -91,7 +107,7 @@ export interface ParsedSfzResponse {
     hiKey: number
     loVel: number
     hiVel: number
-    samples: string[]
+    samples: TakeInfo[]
   }>
 }
 

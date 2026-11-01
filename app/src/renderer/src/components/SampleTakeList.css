@@ -17,17 +17,65 @@
 
 /* Each actual sample file gets its own outline - the real, individually
    verifiable thing a "take" used to just be a trusted count of. */
+.sample-take-list__item {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.sample-take-list__item + .sample-take-list__item {
+  margin-top: 0.5rem;
+}
+
 .sample-take-list__row {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   padding: 0.4rem 0.6rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
 }
 
-.sample-take-list__row + .sample-take-list__row {
-  margin-top: 0.5rem;
+.sample-take-list__toggle {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #888;
+  font-size: 0.7rem;
+}
+
+.sample-take-list__toggle:hover {
+  color: #333;
+}
+
+/* Every opcode literally present on this region, post-cascade - not a
+   hand-picked subset. See OpcodeEntry/TakeInfo in sfz_parse.rs. */
+.sample-take-list__opcodes {
+  border-top: 1px solid #eee;
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+.sample-take-list__opcode {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sample-take-list__opcode-name {
+  color: #888;
+}
+
+.sample-take-list__opcode-value {
+  text-align: right;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sample-take-list__play {
