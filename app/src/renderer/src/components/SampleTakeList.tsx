@@ -1,18 +1,18 @@
-import { useEffect, useState } from 'react'
-import type { CellRecord, TakeInfo } from '../model/instrument'
+import { useEffect, useRef, useState } from 'react'
+import type { CellRecord, RegionInfo, TakeInfo } from '../model/instrument'
 import './SampleTakeList.css'
 
 interface Props {
   cell: CellRecord | null
   sfzFilePath: string | null
-  onPlay: (samplePath: string) => void
 }
 
 // Replaces what used to be a single trust-me "takes: N" number in the
-// criteria panel with the actual files behind it - one row per real sample,
-// each independently loaded, drawn, and playable, so the count is something
-// you can see rather than just believe.
-export default function SampleTakeList({ cell, sfzFilePath, onPlay }: Props): React.JSX.Element {
+// criteria panel with the actual files behind it - one box per take, each
+// independently loaded, drawn, and playable, so the count is something you
+// can see rather than just believe. A take with multiple regions (e.g. a
+// stereo pair) shows all of them, not just one picked arbitrarily.
+export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.Element {
   if (!cell || cell.samples.length === 0) {
     return (
       <div className="sample-take-list">
@@ -24,36 +24,55 @@ export default function SampleTakeList({ cell, sfzFilePath, onPlay }: Props): Re
   return (
     <div className="sample-take-list">
       {cell.samples.map((take, i) => (
-        <TakeRow
-          key={`${take.samplePath}-${i}`}
-          sfzFilePath={sfzFilePath}
-          take={take}
-          onPlay={() => onPlay(take.samplePath)}
-        />
+        <TakeItem key={`${take.regions[0]?.samplePath}-${i}`} take={take} sfzFilePath={sfzFilePath} />
       ))}
     </div>
   )
 }
 
-interface TakeRowProps {
-  sfzFilePath: string | null
+interface TakeItemProps {
   take: TakeInfo
-  onPlay: () => void
+  sfzFilePath: string | null
 }
 
-function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element {
+function TakeItem({ take, sfzFilePath }: TakeItemProps): React.JSX.Element {
+  return (
+    <div className="sample-take-list__item">
+      {take.regions.map((region, i) => (
+        <RegionRow key={`${region.samplePath}-${i}`} sfzFilePath={sfzFilePath} region={region} />
+      ))}
+    </div>
+  )
+}
+
+interface RegionRowProps {
+  sfzFilePath: string | null
+  region: RegionInfo
+}
+
+// The sample files are routinely mono, with the actual stereo placement
+// coming entirely from the SFZ pan opcode (-100..100) at playback time - a
+// plain <audio>/Blob-URL player has no idea that opcode exists, so it plays
+// everything dead center. Playback here goes through a real Web Audio graph
+// (the same decoded buffer used for the waveform) so pan is actually heard.
+function RegionRow({ sfzFilePath, region }: RegionRowProps): React.JSX.Element {
   const [peaks, setPeaks] = useState<Peak[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [opcodesOpen, setOpcodesOpen] = useState(false)
-  const samplePath = take.samplePath
+  const samplePath = region.samplePath
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const audioBufferRef = useRef<AudioBuffer | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setPeaks(null)
     setError(null)
+    audioBufferRef.current = null
     if (!sfzFilePath) return
 
-    let ctx: AudioContext | null = null
+    const ctx = new AudioContext()
+    audioCtxRef.current = ctx
+
     async function load(): Promise<void> {
       try {
         const bytes = await window.api.readAudioFile(sfzFilePath as string, samplePath)
@@ -61,29 +80,51 @@ function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element
         // an ArrayBuffer, and the IPC-returned view may sit on a differently
         // sized backing buffer.
         const arrayBuffer = bytes.slice().buffer as ArrayBuffer
-        ctx = new AudioContext()
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
         if (cancelled) return
+        audioBufferRef.current = audioBuffer
         setPeaks(computePeaks(audioBuffer, PEAK_BARS))
       } catch (err) {
         if (!cancelled) setError(String(err))
-      } finally {
-        ctx?.close()
       }
     }
     load()
 
     return () => {
       cancelled = true
+      ctx.close()
+      audioCtxRef.current = null
     }
   }, [sfzFilePath, samplePath])
+
+  const panOpcode = region.opcodes.find((op) => op.name === 'pan')?.value
+  const panValue = panOpcode !== undefined ? Number(panOpcode) : 0
+  const pan = Number.isFinite(panValue) ? Math.max(-1, Math.min(1, panValue / 100)) : 0
+
+  function handlePlay(): void {
+    const ctx = audioCtxRef.current
+    const buffer = audioBufferRef.current
+    if (!ctx || !buffer) return
+    ctx.resume()
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    const panner = ctx.createStereoPanner()
+    panner.pan.value = pan
+    source.connect(panner).connect(ctx.destination)
+    source.start()
+  }
 
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
 
   return (
-    <div className="sample-take-list__item">
+    <div className="sample-take-list__region">
       <div className="sample-take-list__row">
-        <button type="button" className="sample-take-list__play" onClick={onPlay}>
+        <button
+          type="button"
+          className="sample-take-list__play"
+          onClick={handlePlay}
+          disabled={!peaks}
+        >
           ▶
         </button>
         <span className="sample-take-list__name" title={samplePath}>
@@ -105,7 +146,7 @@ function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element
       </div>
       {opcodesOpen && (
         <div className="sample-take-list__opcodes">
-          {take.opcodes.map((op) => (
+          {region.opcodes.map((op) => (
             <div className="sample-take-list__opcode" key={op.name}>
               <span className="sample-take-list__opcode-name">{op.name}</span>
               <span className="sample-take-list__opcode-value">{op.value}</span>

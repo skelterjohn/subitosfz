@@ -18,7 +18,9 @@
 // round-robin/random-slot/trigger opcodes are the same recorded sound
 // (e.g. a stereo pair split into separately panned L/R regions) and count
 // once, not twice. Opcodes that don't gate *selection* - pan, volume, tune,
-// envelope, the sample path itself - are irrelevant to this grouping.
+// envelope, the sample path itself - are irrelevant to this grouping. Both
+// regions stay visible within that one take, though (see TakeInfo) - being
+// the same *sound* doesn't mean they're the same *file*.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -44,7 +46,7 @@ pub struct OpcodeEntry {
 }
 
 #[derive(Serialize)]
-pub struct TakeInfo {
+pub struct RegionInfo {
     #[serde(rename = "samplePath")]
     pub sample_path: String,
     // Every opcode literally present on this region after global/master/
@@ -54,6 +56,17 @@ pub struct TakeInfo {
     // *display* should be limited to those when SFZ has hundreds of
     // possible opcodes (envelopes, filters, pan, tuning, loop points...).
     pub opcodes: Vec<OpcodeEntry>,
+}
+
+#[derive(Serialize)]
+pub struct TakeInfo {
+    // Usually one region. A stereo pair's L/R regions share every
+    // selection-determining opcode, so they collapse into a single take for
+    // counting purposes (see sound_identity) - but they're still two real,
+    // distinct files (different pan, different sample=), and both need to
+    // stay visible rather than arbitrarily keeping one and dropping the
+    // other.
+    pub regions: Vec<RegionInfo>,
 }
 
 #[derive(Serialize)]
@@ -307,12 +320,11 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     type CellKey = (u8, String, u8, u8);
     let mut cell_sounds: BTreeMap<CellKey, BTreeSet<SoundIdentity>> = BTreeMap::new();
     let mut cell_key_ranges: BTreeMap<CellKey, (u8, u8)> = BTreeMap::new();
-    // The full cascaded opcode map per (cell, distinct sound) - the first
-    // region encountered for that exact sound identity. A stereo pair's two
-    // regions share an identity, so only the first of the pair's maps is
-    // kept here; that's still one real, playable region, just not both
-    // channels.
-    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), OpcodeMap> = BTreeMap::new();
+    // Every region's full cascaded opcode map per (cell, distinct sound) -
+    // not just the first one found. A stereo pair's two regions share a
+    // sound identity (that's what makes them one take), but they're still
+    // two distinct real files that both need to stay visible.
+    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), Vec<OpcodeMap>> = BTreeMap::new();
     for region in &raw_regions {
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -340,9 +352,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         }
 
         if region.contains_key("sample") {
-            sound_regions
-                .entry((key, identity))
-                .or_insert_with(|| region.clone());
+            sound_regions.entry((key, identity)).or_default().push(region.clone());
         }
     }
 
@@ -354,16 +364,22 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
             let samples = sounds
                 .into_iter()
                 .filter_map(|identity| {
-                    let region = sound_regions.get(&(key.clone(), identity))?;
-                    let sample_path = region.get("sample")?.clone();
-                    let opcodes = region
+                    let group = sound_regions.get(&(key.clone(), identity))?;
+                    let regions = group
                         .iter()
-                        .map(|(name, value)| OpcodeEntry {
-                            name: name.clone(),
-                            value: value.clone()
+                        .filter_map(|region| {
+                            let sample_path = region.get("sample")?.clone();
+                            let opcodes = region
+                                .iter()
+                                .map(|(name, value)| OpcodeEntry {
+                                    name: name.clone(),
+                                    value: value.clone()
+                                })
+                                .collect();
+                            Some(RegionInfo { sample_path, opcodes })
                         })
-                        .collect();
-                    Some(TakeInfo { sample_path, opcodes })
+                        .collect::<Vec<_>>();
+                    if regions.is_empty() { None } else { Some(TakeInfo { regions }) }
                 })
                 .collect();
             CellInfo {

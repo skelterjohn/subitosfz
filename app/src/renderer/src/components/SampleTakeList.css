@@ -15,8 +15,9 @@
   font-size: 0.85rem;
 }
 
-/* Each actual sample file gets its own outline - the real, individually
-   verifiable thing a "take" used to just be a trusted count of. */
+/* One outline per take - the real, individually verifiable thing a "take"
+   used to just be a trusted count of. Usually one region inside, but a
+   stereo pair's L/R regions (two distinct real files) both stack here. */
 .sample-take-list__item {
   border: 1px solid #ddd;
   border-radius: 4px;
@@ -24,6 +25,10 @@
 
 .sample-take-list__item + .sample-take-list__item {
   margin-top: 0.5rem;
+}
+
+.sample-take-list__region + .sample-take-list__region {
+  border-top: 1px solid #eee;
 }
 
 .sample-take-list__row {
@@ -91,8 +96,13 @@
   line-height: 1;
 }
 
-.sample-take-list__play:hover {
+.sample-take-list__play:hover:not(:disabled) {
   background: #3a6bc0;
+}
+
+.sample-take-list__play:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .sample-take-list__name {

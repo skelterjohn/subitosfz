@@ -34,13 +34,21 @@ export interface OpcodeEntry {
   value: string
 }
 
-// One distinct recorded sound (round-robin/random-slot take, or a
-// stereo-split region pair counted once) within a cell.
-export interface TakeInfo {
+// One literal <region> within a take - a stereo pair has two of these (L
+// and R are distinct real files with their own pan etc.), most takes have
+// just one.
+export interface RegionInfo {
   // Relative to the .sfz file's own directory (same convention the file
   // itself uses for sample=).
   samplePath: string
   opcodes: OpcodeEntry[]
+}
+
+// One distinct recorded sound (round-robin/random-slot take, or a
+// stereo-split region pair counted once) within a cell. "One sound" isn't
+// "one file" - see RegionInfo.
+export interface TakeInfo {
+  regions: RegionInfo[]
 }
 
 // One recorded sound. loKey/hiKey and loVel/hiVel are the full key and

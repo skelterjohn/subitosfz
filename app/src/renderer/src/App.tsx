@@ -67,24 +67,6 @@ export default function App(): React.JSX.Element {
     await loadSfzFile(path)
   }
 
-  async function playSample(samplePath: string): Promise<void> {
-    if (!sfzFilePath || !samplePath) return
-    try {
-      const bytes = await window.api.readAudioFile(sfzFilePath, samplePath)
-      const ext = samplePath.split('.').pop()?.toLowerCase()
-      const mime = ext === 'ogg' ? 'audio/ogg' : 'audio/wav'
-      // IPC always hands back a real ArrayBuffer (never SharedArrayBuffer),
-      // but TS's generic Uint8Array<ArrayBufferLike> type doesn't guarantee
-      // that to BlobPart - the cast is safe given where bytes came from.
-      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }))
-      const audio = new Audio(url)
-      audio.addEventListener('ended', () => URL.revokeObjectURL(url))
-      await audio.play()
-    } catch (err) {
-      console.error('[playback] failed:', err)
-    }
-  }
-
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
   useEffect(() => {
@@ -213,7 +195,7 @@ export default function App(): React.JSX.Element {
           </div>
           <div className="sample-panel">
             <SampleEditorPanel cell={selectedCell} />
-            <SampleTakeList cell={selectedCell} sfzFilePath={sfzFilePath} onPlay={playSample} />
+            <SampleTakeList cell={selectedCell} sfzFilePath={sfzFilePath} />
           </div>
         </div>
       </div>
