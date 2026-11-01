@@ -42,7 +42,7 @@ interface TakeRowProps {
 }
 
 function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element {
-  const [peaks, setPeaks] = useState<number[] | null>(null)
+  const [peaks, setPeaks] = useState<Peak[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [opcodesOpen, setOpcodesOpen] = useState(false)
   const samplePath = take.samplePath
@@ -64,7 +64,7 @@ function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element
         ctx = new AudioContext()
         const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
         if (cancelled) return
-        setPeaks(computePeaks(audioBuffer, 100))
+        setPeaks(computePeaks(audioBuffer, PEAK_BARS))
       } catch (err) {
         if (!cancelled) setError(String(err))
       } finally {
@@ -117,32 +117,53 @@ function TakeRow({ sfzFilePath, take, onPlay }: TakeRowProps): React.JSX.Element
   )
 }
 
-function computePeaks(buffer: AudioBuffer, bars: number): number[] {
+// High enough that even a several-second sample doesn't look blocky at the
+// waveform box's rendered width - SVG scales crisply, so the only real
+// resolution lever is how many [min, max] slices we actually compute.
+const PEAK_BARS = 600
+
+type Peak = [min: number, max: number]
+
+// Real top/bottom excursion per slice, not just an abs-max mirrored around
+// the centerline - that's what makes the shape look like an actual waveform
+// (asymmetric attack transients, etc.) instead of a symmetric bar chart.
+// Normalized against the sample's own loudest slice, not the theoretical
+// [-1, 1] range - most samples never get near full scale, so without this
+// the drawn shape would sit shrunk in the middle of the box instead of
+// reaching its top/bottom edge.
+function computePeaks(buffer: AudioBuffer, bars: number): Peak[] {
   const data = buffer.getChannelData(0)
   const blockSize = Math.max(1, Math.floor(data.length / bars))
-  const peaks: number[] = []
+  const peaks: Peak[] = []
+  let peakAbs = 0
   for (let i = 0; i < bars; i++) {
     const start = i * blockSize
+    let min = 0
     let max = 0
     for (let j = start; j < start + blockSize && j < data.length; j++) {
-      const v = Math.abs(data[j])
+      const v = data[j]
       if (v > max) max = v
+      if (v < min) min = v
     }
-    peaks.push(max)
+    peakAbs = Math.max(peakAbs, max, -min)
+    peaks.push([min, max])
   }
-  return peaks
+  if (peakAbs === 0) return peaks
+  return peaks.map(([min, max]) => [min / peakAbs, max / peakAbs])
 }
 
-function Waveform({ peaks }: { peaks: number[] }): React.JSX.Element {
+function Waveform({ peaks }: { peaks: Peak[] }): React.JSX.Element {
   return (
     <svg
       viewBox={`0 0 ${peaks.length} 100`}
       preserveAspectRatio="none"
       className="sample-take-list__svg"
     >
-      {peaks.map((p, i) => {
-        const h = Math.max(2, p * 100)
-        return <rect key={i} x={i} y={(100 - h) / 2} width={0.8} height={h} />
+      {peaks.map(([min, max], i) => {
+        const top = 50 - max * 50
+        const bottom = 50 - min * 50
+        const height = Math.max(1, bottom - top)
+        return <rect key={i} x={i} y={top} width={1} height={height} />
       })}
     </svg>
   )
