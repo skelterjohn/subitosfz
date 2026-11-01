@@ -19,17 +19,21 @@ export default function SampleEditorPanel({ cell }: Props): React.JSX.Element {
     )
   }
 
-  // Labels are the literal SFZ opcode names, not display-friendly
-  // paraphrases. Values lead with the literal number too (what's actually in
-  // the opcode), with the note name alongside only as a reading aid - not a
-  // substitute for it.
+  // Friendly labels/values here, not literal opcode names or MIDI numbers -
+  // the raw opcodes (pitch_keycenter, lokey, hikey, lovel, hivel, sw_last,
+  // and everything else) are already available verbatim per-take below, so
+  // this panel can read like a summary instead of a second copy of that.
+  const pitchRange =
+    cell.loKey === cell.hiKey
+      ? midiToName(cell.loKey)
+      : `${midiToName(cell.loKey)}-${midiToName(cell.hiKey)}`
+  const volumeRange = cell.loVel === cell.hiVel ? String(cell.loVel) : `${cell.loVel}-${cell.hiVel}`
+
   const fields: Array<[string, string]> = [
-    ['pitch_keycenter', `${cell.note} (${midiToName(Number(cell.note))})`],
-    ['sw_last', cell.articulation],
-    ['lokey', `${cell.loKey} (${midiToName(cell.loKey)})`],
-    ['hikey', `${cell.hiKey} (${midiToName(cell.hiKey)})`],
-    ['lovel', String(cell.loVel)],
-    ['hivel', String(cell.hiVel)]
+    ['pitch', midiToName(Number(cell.note))],
+    ['pitch range', pitchRange],
+    ['volume', volumeRange],
+    ['articulation', cell.articulation]
   ]
 
   return (

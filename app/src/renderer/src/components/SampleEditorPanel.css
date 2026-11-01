@@ -33,12 +33,11 @@
   border-bottom: 1px solid #eee;
 }
 
-/* Lowercase, monospace - these are literal SFZ opcode names straight out of
-   the file, not display labels, so they shouldn't be re-cased. */
 .sample-editor__label {
   color: #888;
-  font-size: 0.75rem;
-  font-family: monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   white-space: nowrap;
 }
 
