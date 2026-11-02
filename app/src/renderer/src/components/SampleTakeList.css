@@ -244,10 +244,22 @@
 .sample-take-list__name {
   flex: 0 0 160px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.sample-take-list__filename {
   font-size: 0.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.sample-take-list__duration {
+  font-size: 0.65rem;
+  color: #999;
+  white-space: nowrap;
 }
 
 .sample-take-list__waveform {

@@ -130,6 +130,10 @@ function regionLoopRangeSec(
   return { start: startFrames / nativeSampleRate, end: endFrames / nativeSampleRate }
 }
 
+function formatDuration(seconds: number): string {
+  return `${seconds.toFixed(2)}s`
+}
+
 // The sample files are routinely mono, with the actual stereo placement
 // coming entirely from the SFZ pan opcode (-100..100) at playback time - a
 // plain <audio>/Blob-URL player has no idea that opcode exists, so it plays
@@ -482,9 +486,12 @@ function RegionRow({ region, state, playheadFraction, onPlay }: RegionRowProps):
         >
           {opcodesOpen ? '▾' : '▸'}
         </button>
-        <span className="sample-take-list__name" title={samplePath}>
-          {fileName}
-        </span>
+        <div className="sample-take-list__name" title={samplePath}>
+          <span className="sample-take-list__filename">{fileName}</span>
+          {state?.status === 'ready' && (
+            <span className="sample-take-list__duration">{formatDuration(state.durationSec)}</span>
+          )}
+        </div>
         <div className="sample-take-list__waveform">
           {state?.status === 'error' && (
             <span className="sample-take-list__status">failed to load</span>
