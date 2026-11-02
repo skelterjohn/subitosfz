@@ -426,16 +426,21 @@ function TakeItem({
           above it rather than beside it, so the pair still reads as one
           column at the fixed 48px width the row layout expects. */}
       <div className="sample-take-list__play-take-col">
-        <input
-          type="number"
-          className="sample-take-list__hold-seconds"
-          value={holdSeconds}
-          min={0}
-          step={0.5}
-          onChange={(e) => setHoldSeconds(Math.max(0, Number(e.target.value) || 0))}
-          aria-label="Seconds to hold this take's note before release"
-          title="Seconds to hold this take's note before release (uses loop_ and ampeg_ opcodes)"
-        />
+        <div className="sample-take-list__hold-seconds-wrap">
+          <input
+            type="number"
+            className="sample-take-list__hold-seconds"
+            value={holdSeconds}
+            min={0}
+            step={0.5}
+            onChange={(e) => setHoldSeconds(Math.max(0, Number(e.target.value) || 0))}
+            aria-label="Seconds to hold this take's note before release"
+            title="Seconds to hold this take's note before release (uses loop_ and ampeg_ opcodes)"
+          />
+          <span className="sample-take-list__hold-seconds-unit" aria-hidden="true">
+            s
+          </span>
+        </div>
         <button
           type="button"
           className="sample-take-list__play-take"
