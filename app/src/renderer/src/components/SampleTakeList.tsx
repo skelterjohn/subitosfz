@@ -113,9 +113,18 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
     const now = ctx.currentTime
     const next: Record<string, number> = {}
     activePlaybackRef.current.forEach((info, key) => {
+      const elapsed = now - info.startAt
+      // Scheduled a little into the future for sync (see startAt below) -
+      // the first frame or two can land before it actually starts, which is
+      // "nothing to draw yet", not "finished" - only drop the entry once
+      // we're actually past its end.
+      if (elapsed > info.durationSec) {
+        activePlaybackRef.current.delete(key)
+        return
+      }
+      if (elapsed < 0) return
       const frac = playbackFraction(info, now)
       if (frac !== null) next[key] = frac
-      else activePlaybackRef.current.delete(key)
     })
     setPlayheads(next)
     rafRef.current = activePlaybackRef.current.size > 0 ? requestAnimationFrame(tick) : null

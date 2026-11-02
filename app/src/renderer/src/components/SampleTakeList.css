@@ -259,7 +259,7 @@
 /* Live playback position - non-scaling-stroke keeps it a crisp hairline
    regardless of the viewBox's per-sample-bar coordinate scale. */
 .sample-take-list__svg line.sample-take-list__playhead {
-  stroke: #e53935;
+  stroke: #000;
   stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
 }
