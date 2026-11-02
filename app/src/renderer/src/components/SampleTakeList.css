@@ -14,35 +14,6 @@
   padding: 0.5rem;
 }
 
-/* Stays put below the scrollable take list - for judging by ear whether
-   regions that got grouped as "the same sound" (or merely similar
-   criteria) actually belong together. */
-.sample-take-list__play-all {
-  flex-shrink: 0;
-  cursor: pointer;
-  margin: 0.5rem;
-  margin-top: 0;
-  padding: 0.5rem;
-  border-top: 1px solid #ddd;
-  border-left: none;
-  border-right: none;
-  border-bottom: none;
-  border-radius: 0;
-  background: transparent;
-  color: #4a7fd9;
-  font-weight: 600;
-  font-size: 0.85rem;
-}
-
-.sample-take-list__play-all:hover:not(:disabled) {
-  background: #f0f4fc;
-}
-
-.sample-take-list__play-all:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .sample-take-list__empty {
   padding: 1rem;
   text-align: center;
@@ -53,8 +24,12 @@
 
 /* One outline per take - the real, individually verifiable thing a "take"
    used to just be a trusted count of. Usually one region inside, but a
-   stereo pair's L/R regions (two distinct real files) both stack here. */
+   stereo pair's L/R regions (two distinct real files) both stack here. Row
+   layout so a multi-region take's "play together" button can sit to the
+   right, stretched to the combined height of its regions. */
 .sample-take-list__item {
+  display: flex;
+  align-items: stretch;
   border: 1px solid #ddd;
   border-radius: 4px;
 }
@@ -63,8 +38,41 @@
   margin-top: 0.5rem;
 }
 
+.sample-take-list__regions {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .sample-take-list__region + .sample-take-list__region {
   border-top: 1px solid #eee;
+}
+
+/* The regions inside here always fire together on a single note-on (that's
+   literally what makes them one take, not separate round-robin
+   alternatives) - big and tall, spanning every region's row, rather than
+   another small circular button like the per-region ones. */
+.sample-take-list__play-take {
+  flex-shrink: 0;
+  width: 48px;
+  cursor: pointer;
+  border: none;
+  border-left: 1px solid #ddd;
+  border-radius: 0 4px 4px 0;
+  background: #4a7fd9;
+  color: white;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.sample-take-list__play-take:hover:not(:disabled) {
+  background: #3a6bc0;
+}
+
+.sample-take-list__play-take:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .sample-take-list__row {

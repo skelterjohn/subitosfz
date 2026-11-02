@@ -39,11 +39,16 @@ function regionPan(region: RegionInfo): number {
 // criteria panel with the actual files behind it - one box per take, each
 // independently loaded, drawn, and playable, so the count is something you
 // can see rather than just believe. A take with multiple regions (e.g. a
-// stereo pair) shows all of them, not just one picked arbitrarily.
+// stereo pair) shows all of them, not just one picked arbitrarily, plus a
+// "play take" button that fires all of that take's regions together - that
+// matches actual SFZ playback (every region sharing one sound identity
+// triggers simultaneously), unlike round-robin alternatives across
+// different takes, which are mutually exclusive per note-on and so never
+// get a combined play control.
 //
-// Decoding happens once here (not per-row) so "play all" can fire every
-// region's already-decoded buffer at the same scheduled start time, instead
-// of re-fetching/re-decoding on click.
+// Decoding happens once here (not per-row) so playing a take can fire every
+// one of its regions' already-decoded buffers at the same scheduled start
+// time, instead of re-fetching/re-decoding on click.
 export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.Element {
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -101,25 +106,26 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
     source.start()
   }
 
-  // Scheduled at the same future instant for every region rather than
-  // started back-to-back in a loop, so node-creation overhead doesn't
-  // stagger the actual playback - this is the whole point of the button:
-  // judging whether regions genuinely belong together by ear.
-  function playAll(): void {
+  // Scheduled at the same future instant for every region in the take
+  // rather than started back-to-back in a loop, so node-creation overhead
+  // doesn't stagger the actual playback - this is what real SFZ playback
+  // does too (one note-on fires every region sharing that sound identity).
+  function playTake(takeIndex: number, take: TakeInfo): void {
     const ctx = audioCtxRef.current
-    if (!ctx || !cell) return
+    if (!ctx) return
     ctx.resume()
     const startAt = ctx.currentTime + 0.05
-    for (const { key, region } of flattenRegions(cell)) {
+    take.regions.forEach((region, ri) => {
+      const key = `${takeIndex}-${ri}-${region.samplePath}`
       const buffer = buffersRef.current.get(key)
-      if (!buffer) continue
+      if (!buffer) return
       const source = ctx.createBufferSource()
       source.buffer = buffer
       const panner = ctx.createStereoPanner()
       panner.pan.value = regionPan(region)
       source.connect(panner).connect(ctx.destination)
       source.start(startAt)
-    }
+    })
   }
 
   if (!cell || cell.samples.length === 0) {
@@ -130,8 +136,6 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
     )
   }
 
-  const anyReady = Object.values(regionStates).some((s) => s.status === 'ready')
-
   return (
     <div className="sample-take-list">
       <div className="sample-take-list__scroll">
@@ -141,18 +145,11 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
             takeIndex={i}
             take={take}
             regionStates={regionStates}
-            onPlay={playRegion}
+            onPlayRegion={playRegion}
+            onPlayTake={playTake}
           />
         ))}
       </div>
-      <button
-        type="button"
-        className="sample-take-list__play-all"
-        onClick={playAll}
-        disabled={!anyReady}
-      >
-        ▶ play all
-      </button>
     </div>
   )
 }
@@ -161,25 +158,55 @@ interface TakeItemProps {
   takeIndex: number
   take: TakeInfo
   regionStates: Record<string, RegionState>
-  onPlay: (key: string, region: RegionInfo) => void
+  onPlayRegion: (key: string, region: RegionInfo) => void
+  onPlayTake: (takeIndex: number, take: TakeInfo) => void
 }
 
-function TakeItem({ takeIndex, take, regionStates, onPlay }: TakeItemProps): React.JSX.Element {
+function TakeItem({
+  takeIndex,
+  take,
+  regionStates,
+  onPlayRegion,
+  onPlayTake
+}: TakeItemProps): React.JSX.Element {
+  // Only regions within one take actually fire together on a single
+  // note-on (e.g. a stereo L/R pair) - a single-region take has nothing a
+  // combined button would add over its own row's play button.
+  const isGrouped = take.regions.length > 1
+  const anyReady = take.regions.some((region, ri) => {
+    const key = `${takeIndex}-${ri}-${region.samplePath}`
+    return regionStates[key]?.status === 'ready'
+  })
+
   return (
     <div className="sample-take-list__item">
-      {take.regions.map((region, i) => {
-        // Must match flattenRegions' key format exactly - this is how a
-        // row finds its own decoded buffer/peaks in the shared state above.
-        const key = `${takeIndex}-${i}-${region.samplePath}`
-        return (
-          <RegionRow
-            key={key}
-            region={region}
-            state={regionStates[key]}
-            onPlay={() => onPlay(key, region)}
-          />
-        )
-      })}
+      <div className="sample-take-list__regions">
+        {take.regions.map((region, i) => {
+          // Must match flattenRegions' key format exactly - this is how a
+          // row finds its own decoded buffer/peaks in the shared state above.
+          const key = `${takeIndex}-${i}-${region.samplePath}`
+          return (
+            <RegionRow
+              key={key}
+              region={region}
+              state={regionStates[key]}
+              onPlay={() => onPlayRegion(key, region)}
+            />
+          )
+        })}
+      </div>
+      {isGrouped && (
+        <button
+          type="button"
+          className="sample-take-list__play-take"
+          onClick={() => onPlayTake(takeIndex, take)}
+          disabled={!anyReady}
+          title="Play every region in this take together"
+          aria-label="Play take"
+        >
+          ▶
+        </button>
+      )}
     </div>
   )
 }
