@@ -49,8 +49,9 @@ pub fn list_presets(path: &Path) -> Result<Vec<PresetSummary>, String> {
         .collect())
 }
 
-// A zone's generators, merged with the instrument's global zone (if any)
-// providing defaults. Keyed by the raw generator id so lookups are simple.
+// A zone's own generators, keyed by the raw generator id so lookups are
+// simple. Never pre-merged with the instrument's global zone - see
+// instrument_sample_zones for why.
 type GenMap = BTreeMap<u16, i32>;
 
 fn generator_amount_as_i32(generator: &soundfont::raw::Generator) -> Option<i32> {
@@ -69,12 +70,6 @@ fn zone_gen_map(zone: &Zone) -> GenMap {
             map.insert(generator.ty.as_raw(), v);
         }
     }
-    map
-}
-
-fn merged_gen_map(global: Option<&GenMap>, specific: &GenMap) -> GenMap {
-    let mut map = global.cloned().unwrap_or_default();
-    map.extend(specific.iter().map(|(k, v)| (*k, *v)));
     map
 }
 
@@ -102,6 +97,66 @@ fn pan_to_percent(raw: i32) -> f64 {
     (raw as f64 / 500.0 * 100.0).clamp(-100.0, 100.0)
 }
 
+fn sample_modes_to_loop_mode(sample_modes: i32) -> Option<&'static str> {
+    match sample_modes {
+        1 => Some("loop_continuous"),
+        3 => Some("loop_sustain"),
+        _ => None,
+    }
+}
+
+// Extracts the opcodes that only depend on a bare (unmerged) generator map -
+// envelope, pan, tune, volume, loop mode. Called once on the global zone's
+// map to build <global>, and once per region on that zone's own map to
+// build its <region> - a region that doesn't set a generator itself simply
+// omits the line here, correctly inheriting whatever <global> provided via
+// normal SFZ cascading, with no merging needed on our end.
+fn optional_opcode_lines(gens: &GenMap) -> Vec<(&'static str, String)> {
+    let mut lines = Vec::new();
+
+    if let Some(p) = get(gens, GeneratorType::Pan) {
+        lines.push(("pan", format!("{:.1}", pan_to_percent(p))));
+    }
+
+    let coarse_tune = get(gens, GeneratorType::CoarseTune);
+    let fine_tune = get(gens, GeneratorType::FineTune);
+    if coarse_tune.is_some() || fine_tune.is_some() {
+        let tune_cents = coarse_tune.unwrap_or(0) * 100 + fine_tune.unwrap_or(0);
+        if tune_cents != 0 {
+            lines.push(("tune", tune_cents.to_string()));
+        }
+    }
+
+    if let Some(a) = get(gens, GeneratorType::InitialAttenuation) {
+        let volume_db = -centibels_to_db(a);
+        if volume_db.abs() > 0.01 {
+            lines.push(("volume", format!("{volume_db:.2}")));
+        }
+    }
+
+    if let Some(a) = get(gens, GeneratorType::AttackVolEnv) {
+        lines.push(("ampeg_attack", format!("{:.4}", timecents_to_seconds(a))));
+    }
+    if let Some(h) = get(gens, GeneratorType::HoldVolEnv) {
+        lines.push(("ampeg_hold", format!("{:.4}", timecents_to_seconds(h))));
+    }
+    if let Some(d) = get(gens, GeneratorType::DecayVolEnv) {
+        lines.push(("ampeg_decay", format!("{:.4}", timecents_to_seconds(d))));
+    }
+    if let Some(s) = get(gens, GeneratorType::SustainVolEnv) {
+        lines.push(("ampeg_sustain", format!("{:.2}", centibels_to_sustain_percent(s))));
+    }
+    if let Some(r) = get(gens, GeneratorType::ReleaseVolEnv) {
+        lines.push(("ampeg_release", format!("{:.4}", timecents_to_seconds(r))));
+    }
+
+    if let Some(mode) = get(gens, GeneratorType::SampleModes).and_then(sample_modes_to_loop_mode) {
+        lines.push(("loop_mode", mode.to_string()));
+    }
+
+    lines
+}
+
 fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .trim()
@@ -125,6 +180,10 @@ struct SampleZone {
     vel_lo: u8,
     vel_hi: u8,
     sample_id: u16,
+    // This zone's OWN generators only - deliberately not merged with the
+    // instrument's global zone. Keeping them separate is what lets the SFZ
+    // writer emit a real <global> header instead of flattening the same
+    // resolved value onto every region (see optional_opcode_lines).
     gens: GenMap,
 }
 
@@ -139,8 +198,13 @@ fn zone_range(zone: &Zone, ty: GeneratorType) -> Option<(u8, u8)> {
         .map(|r| (r.low, r.high))
 }
 
-fn instrument_sample_zones(instrument: &Instrument) -> Vec<SampleZone> {
-    let mut global_gens: Option<GenMap> = None;
+// Returns each sample zone plus the instrument's global zone generators
+// separately (empty map if there is none) - callers resolve fallback
+// (zone-own, else global) only where SFZ itself can't do it for them
+// (root key, whether a region loops at all); everything else is handled by
+// emitting <global> once and letting normal SFZ cascading do the rest.
+fn instrument_sample_zones(instrument: &Instrument) -> (Vec<SampleZone>, GenMap) {
+    let mut global_gens = GenMap::new();
     let mut global_key_range: Option<(u8, u8)> = None;
     let mut global_vel_range: Option<(u8, u8)> = None;
     let mut out = Vec::new();
@@ -152,7 +216,7 @@ fn instrument_sample_zones(instrument: &Instrument) -> Vec<SampleZone> {
             // A zone with no sample reference is only meaningful as the
             // instrument's global zone, and only if it's first.
             if i == 0 {
-                global_gens = Some(zone_gen_map(zone));
+                global_gens = zone_gen_map(zone);
                 global_key_range = zone_range(zone, GeneratorType::KeyRange);
                 global_vel_range = zone_range(zone, GeneratorType::VelRange);
             }
@@ -160,7 +224,7 @@ fn instrument_sample_zones(instrument: &Instrument) -> Vec<SampleZone> {
         }
         let sample_id = *sample_id.unwrap();
 
-        let gens = merged_gen_map(global_gens.as_ref(), &zone_gen_map(zone));
+        let gens = zone_gen_map(zone);
         let (key_lo, key_hi) = zone_range(zone, GeneratorType::KeyRange)
             .or(global_key_range)
             .unwrap_or((0, 127));
@@ -178,7 +242,7 @@ fn instrument_sample_zones(instrument: &Instrument) -> Vec<SampleZone> {
         });
     }
 
-    out
+    (out, global_gens)
 }
 
 pub fn export_preset(
@@ -205,10 +269,11 @@ pub fn export_preset(
         .get(*instrument_id as usize)
         .ok_or_else(|| "instrument index out of range".to_string())?;
 
-    let zones = instrument_sample_zones(instrument);
+    let (zones, global_gens) = instrument_sample_zones(instrument);
     if zones.is_empty() {
         return Err("instrument has no sample zones".to_string());
     }
+    let global_lines = optional_opcode_lines(&global_gens);
 
     let safe_name = sanitize_filename(instrument_name);
     let samples_dir = dest_dir.join(&safe_name);
@@ -281,32 +346,25 @@ pub fn export_preset(
         let rel_loop_start = header.loop_start.saturating_sub(header.start);
         let rel_loop_end = header.loop_end.saturating_sub(header.start);
 
+        // Root key isn't something <global> can cover via the opcode-lines
+        // helper (it's always a required per-region line, not an optional
+        // one), so its own-zone-else-global fallback has to happen here.
         let root_key = get(&zone.gens, GeneratorType::OverridingRootKey)
+            .or_else(|| get(&global_gens, GeneratorType::OverridingRootKey))
             .filter(|&v| v >= 0)
             .map(|v| v as u8)
             .unwrap_or(header.origpitch);
 
-        let pan = get(&zone.gens, GeneratorType::Pan).map(pan_to_percent);
-        let coarse_tune = get(&zone.gens, GeneratorType::CoarseTune).unwrap_or(0);
-        let fine_tune = get(&zone.gens, GeneratorType::FineTune).unwrap_or(0);
-        let tune_cents = coarse_tune * 100 + fine_tune;
-
-        let attenuation_cb = get(&zone.gens, GeneratorType::InitialAttenuation).unwrap_or(0);
-        let volume_db = -centibels_to_db(attenuation_cb);
-
-        let attack = get(&zone.gens, GeneratorType::AttackVolEnv).map(timecents_to_seconds);
-        let hold = get(&zone.gens, GeneratorType::HoldVolEnv).map(timecents_to_seconds);
-        let decay = get(&zone.gens, GeneratorType::DecayVolEnv).map(timecents_to_seconds);
-        let sustain =
-            get(&zone.gens, GeneratorType::SustainVolEnv).map(centibels_to_sustain_percent);
-        let release = get(&zone.gens, GeneratorType::ReleaseVolEnv).map(timecents_to_seconds);
-
-        let sample_modes = get(&zone.gens, GeneratorType::SampleModes).unwrap_or(0);
-        let loop_mode = match sample_modes {
-            1 => Some("loop_continuous"),
-            3 => Some("loop_sustain"),
-            _ => None,
-        };
+        // loop_start/loop_end are sample-frame offsets specific to this
+        // exact audio file, so they're always per-region when present at
+        // all - but "present at all" depends on the EFFECTIVE loop mode,
+        // which might be inherited from <global> rather than set on this
+        // zone, so that fallback (unlike the rest of optional_opcode_lines)
+        // still has to be resolved here too.
+        let loops = get(&zone.gens, GeneratorType::SampleModes)
+            .or_else(|| get(&global_gens, GeneratorType::SampleModes))
+            .and_then(sample_modes_to_loop_mode)
+            .is_some();
 
         sfz_regions.push_str("<region>\n");
         sfz_regions.push_str(&format!("sample={safe_name}/{sample_file_name}\n"));
@@ -315,32 +373,13 @@ pub fn export_preset(
         sfz_regions.push_str(&format!("lovel={}\n", zone.vel_lo));
         sfz_regions.push_str(&format!("hivel={}\n", zone.vel_hi));
         sfz_regions.push_str(&format!("pitch_keycenter={root_key}\n"));
-        if tune_cents != 0 {
-            sfz_regions.push_str(&format!("tune={tune_cents}\n"));
+        // Only this zone's own overrides - anything it doesn't set itself
+        // is inherited from <global> via normal SFZ cascading, not
+        // re-resolved and reprinted here.
+        for (name, value) in optional_opcode_lines(&zone.gens) {
+            sfz_regions.push_str(&format!("{name}={value}\n"));
         }
-        if let Some(p) = pan {
-            sfz_regions.push_str(&format!("pan={p:.1}\n"));
-        }
-        if volume_db.abs() > 0.01 {
-            sfz_regions.push_str(&format!("volume={volume_db:.2}\n"));
-        }
-        if let Some(a) = attack {
-            sfz_regions.push_str(&format!("ampeg_attack={a:.4}\n"));
-        }
-        if let Some(h) = hold {
-            sfz_regions.push_str(&format!("ampeg_hold={h:.4}\n"));
-        }
-        if let Some(d) = decay {
-            sfz_regions.push_str(&format!("ampeg_decay={d:.4}\n"));
-        }
-        if let Some(s) = sustain {
-            sfz_regions.push_str(&format!("ampeg_sustain={s:.2}\n"));
-        }
-        if let Some(r) = release {
-            sfz_regions.push_str(&format!("ampeg_release={r:.4}\n"));
-        }
-        if let Some(mode) = loop_mode {
-            sfz_regions.push_str(&format!("loop_mode={mode}\n"));
+        if loops {
             sfz_regions.push_str(&format!("loop_start={rel_loop_start}\n"));
             sfz_regions.push_str(&format!("loop_end={rel_loop_end}\n"));
         }
@@ -349,10 +388,20 @@ pub fn export_preset(
         sample_count += 1;
     }
 
+    let mut global_block = String::new();
+    if !global_lines.is_empty() {
+        global_block.push_str("<global>\n");
+        for (name, value) in &global_lines {
+            global_block.push_str(&format!("{name}={value}\n"));
+        }
+        global_block.push('\n');
+    }
+
     let sfz_text = format!(
-        "// Imported from {} - preset \"{}\"\n\n{}",
+        "// Imported from {} - preset \"{}\"\n\n{}{}",
         path.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
         preset.header.name,
+        global_block,
         sfz_regions
     );
 
