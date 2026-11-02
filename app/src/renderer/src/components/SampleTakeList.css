@@ -49,17 +49,50 @@
   border-top: 1px solid #eee;
 }
 
+/* Houses the loop toggle above the take's play button, stacked in the same
+   48px-wide column the play button used to occupy alone. */
+.sample-take-list__play-take-col {
+  flex-shrink: 0;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sample-take-list__loop-toggle {
+  flex-shrink: 0;
+  height: 22px;
+  cursor: pointer;
+  border: none;
+  border-left: 1px solid #ddd;
+  border-bottom: 1px solid #ddd;
+  border-radius: 0 4px 0 0;
+  background: #f0f0f0;
+  color: #999;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.sample-take-list__loop-toggle:hover {
+  background: #e6e6e6;
+  color: #555;
+}
+
+.sample-take-list__loop-toggle--active {
+  background: #ffb300;
+  color: white;
+}
+
 /* The regions inside here always fire together on a single note-on (that's
    literally what makes them one take, not separate round-robin
    alternatives) - big and tall, spanning every region's row, rather than
    another small circular button like the per-region ones. */
 .sample-take-list__play-take {
-  flex-shrink: 0;
-  width: 48px;
+  flex: 1;
+  min-height: 0;
   cursor: pointer;
   border: none;
   border-left: 1px solid #ddd;
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 0 4px 0;
   background: #4a7fd9;
   color: white;
   font-size: 1.3rem;

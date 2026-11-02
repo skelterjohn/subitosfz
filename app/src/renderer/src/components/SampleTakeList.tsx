@@ -128,7 +128,11 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
   // rather than started back-to-back in a loop, so node-creation overhead
   // doesn't stagger the actual playback - this is what real SFZ playback
   // does too (one note-on fires every region sharing that sound identity).
-  function playTake(takeIndex: number, take: TakeInfo): void {
+  // With loop on, each region's own loop_start/loop_end opcodes drive the
+  // native AudioBufferSourceNode loop (so a region without a loop range
+  // just plays through once, untouched), and every source is cut off at
+  // the same fixed instant rather than left to loop indefinitely.
+  function playTake(takeIndex: number, take: TakeInfo, loop: boolean): void {
     const ctx = audioCtxRef.current
     if (!ctx) return
     ctx.resume()
@@ -142,6 +146,13 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       const panner = ctx.createStereoPanner()
       panner.pan.value = regionPan(region)
       source.connect(panner).connect(ctx.destination)
+      const loopRange = loop ? regionLoopRange(region) : null
+      if (loopRange) {
+        source.loop = true
+        source.loopStart = loopRange.start / buffer.sampleRate
+        source.loopEnd = loopRange.end / buffer.sampleRate
+        source.stop(startAt + LOOP_PREVIEW_SECONDS)
+      }
       source.start(startAt)
     })
   }
@@ -177,7 +188,7 @@ interface TakeItemProps {
   take: TakeInfo
   regionStates: Record<string, RegionState>
   onPlayRegion: (key: string, region: RegionInfo) => void
-  onPlayTake: (takeIndex: number, take: TakeInfo) => void
+  onPlayTake: (takeIndex: number, take: TakeInfo, loop: boolean) => void
 }
 
 function TakeItem({
@@ -187,6 +198,7 @@ function TakeItem({
   onPlayRegion,
   onPlayTake
 }: TakeItemProps): React.JSX.Element {
+  const [loopEnabled, setLoopEnabled] = useState(false)
   const anyReady = take.regions.some((region, ri) => {
     const key = `${takeIndex}-${ri}-${region.samplePath}`
     return regionStates[key]?.status === 'ready'
@@ -212,17 +224,34 @@ function TakeItem({
       {/* The only play control visible on a folded row - an individual
           region's own play button only shows once its opcode panel is
           unfolded, so the collapsed view always has exactly one play
-          button regardless of take size. */}
-      <button
-        type="button"
-        className="sample-take-list__play-take"
-        onClick={() => onPlayTake(takeIndex, take)}
-        disabled={!anyReady}
-        title="Play this take"
-        aria-label="Play take"
-      >
-        ▶
-      </button>
+          button regardless of take size. The loop toggle sits above it
+          rather than beside it, so the pair still reads as one column at
+          the fixed 48px width the row layout expects. */}
+      <div className="sample-take-list__play-take-col">
+        <button
+          type="button"
+          className={
+            'sample-take-list__loop-toggle' +
+            (loopEnabled ? ' sample-take-list__loop-toggle--active' : '')
+          }
+          onClick={() => setLoopEnabled((v) => !v)}
+          aria-pressed={loopEnabled}
+          aria-label="Loop the sustain region for 3 seconds before stopping"
+          title="Loop the sustain region for 3 seconds before stopping"
+        >
+          ↻
+        </button>
+        <button
+          type="button"
+          className="sample-take-list__play-take"
+          onClick={() => onPlayTake(takeIndex, take, loopEnabled)}
+          disabled={!anyReady}
+          title="Play this take"
+          aria-label="Play take"
+        >
+          ▶
+        </button>
+      </div>
     </div>
   )
 }
@@ -319,6 +348,11 @@ function OpcodeRow({ op }: { op: OpcodeEntry }): React.JSX.Element {
     </div>
   )
 }
+
+// How long a looped take preview runs before being cut off - long enough to
+// actually hear the sustain loop repeat a few times, short enough not to
+// drone on when the loop point is short.
+const LOOP_PREVIEW_SECONDS = 3
 
 // High enough that even a several-second sample doesn't look blocky at the
 // waveform box's rendered width - SVG scales crisply, so the only real
