@@ -25,7 +25,36 @@ function flattenRegions(cell: CellRecord): FlatRegion[] {
 type RegionState =
   | { status: 'loading' }
   | { status: 'error' }
-  | { status: 'ready'; peaks: Peak[]; totalSamples: number }
+  | { status: 'ready'; peaks: Peak[]; totalSamples: number; sampleRate: number }
+
+// What a currently-sounding region needs in order to compute, on demand,
+// where its playhead currently sits - recomputed each animation frame
+// rather than stored as a moving number, since "now" only exists as
+// ctx.currentTime at read time.
+interface PlaybackInfo {
+  startAt: number
+  durationSec: number
+  loopStartSec: number | null
+  loopEndSec: number | null
+  sampleRate: number
+  totalSamples: number
+}
+
+// Fraction (0..1) of the waveform's width the playhead currently sits at,
+// or null once playback has finished (or hasn't started yet) - null means
+// "don't draw a line" to the caller.
+function playbackFraction(info: PlaybackInfo, now: number): number | null {
+  const elapsed = now - info.startAt
+  if (elapsed < 0 || elapsed > info.durationSec) return null
+  let posSec = elapsed
+  if (info.loopStartSec !== null && info.loopEndSec !== null && elapsed > info.loopStartSec) {
+    const loopLen = info.loopEndSec - info.loopStartSec
+    posSec = info.loopStartSec + ((elapsed - info.loopStartSec) % loopLen)
+  }
+  const durationSecOfBuffer = info.totalSamples / info.sampleRate
+  if (durationSecOfBuffer <= 0) return null
+  return Math.min(1, posSec / durationSecOfBuffer)
+}
 
 // loop_start/loop_end are sample-frame offsets at the file's own native
 // rate - approximated here against the decoded AudioBuffer's length, which
@@ -65,12 +94,47 @@ function regionPan(region: RegionInfo): number {
 // time, instead of re-fetching/re-decoding on click.
 export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.Element {
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
+  const [playheads, setPlayheads] = useState<Record<string, number>>({})
   const audioCtxRef = useRef<AudioContext | null>(null)
   const buffersRef = useRef<Map<string, AudioBuffer>>(new Map())
+  const activePlaybackRef = useRef<Map<string, PlaybackInfo>>(new Map())
+  const rafRef = useRef<number | null>(null)
+
+  // Drives the playhead line: as long as anything is actively playing,
+  // recompute every active region's fraction each frame from ctx.currentTime
+  // (there's no other clock to read a "current position" from) and push
+  // them all into state at once, rather than one timer per region.
+  function tick(): void {
+    const ctx = audioCtxRef.current
+    if (!ctx) {
+      rafRef.current = null
+      return
+    }
+    const now = ctx.currentTime
+    const next: Record<string, number> = {}
+    activePlaybackRef.current.forEach((info, key) => {
+      const frac = playbackFraction(info, now)
+      if (frac !== null) next[key] = frac
+      else activePlaybackRef.current.delete(key)
+    })
+    setPlayheads(next)
+    rafRef.current = activePlaybackRef.current.size > 0 ? requestAnimationFrame(tick) : null
+  }
+
+  function registerPlayback(key: string, info: PlaybackInfo): void {
+    activePlaybackRef.current.set(key, info)
+    if (rafRef.current === null) rafRef.current = requestAnimationFrame(tick)
+  }
 
   useEffect(() => {
     buffersRef.current = new Map()
     setRegionStates({})
+    activePlaybackRef.current.clear()
+    setPlayheads({})
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
     if (!cell || !sfzFilePath) return
 
     const ctx = new AudioContext()
@@ -95,7 +159,8 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
             [key]: {
               status: 'ready',
               peaks: computePeaks(audioBuffer, PEAK_BARS),
-              totalSamples: audioBuffer.length
+              totalSamples: audioBuffer.length,
+              sampleRate: audioBuffer.sampleRate
             }
           }))
         } catch {
@@ -116,12 +181,21 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
     const buffer = buffersRef.current.get(key)
     if (!ctx || !buffer) return
     ctx.resume()
+    const startAt = ctx.currentTime + 0.05
     const source = ctx.createBufferSource()
     source.buffer = buffer
     const panner = ctx.createStereoPanner()
     panner.pan.value = regionPan(region)
     source.connect(panner).connect(ctx.destination)
-    source.start()
+    source.start(startAt)
+    registerPlayback(key, {
+      startAt,
+      durationSec: buffer.duration,
+      loopStartSec: null,
+      loopEndSec: null,
+      sampleRate: buffer.sampleRate,
+      totalSamples: buffer.length
+    })
   }
 
   // Scheduled at the same future instant for every region in the take
@@ -153,14 +227,26 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       // stop() throws if called before start() - both calls just schedule
       // future audio events, but the ordering requirement still applies.
       source.start(startAt)
+      let durationSec = buffer.duration
+      let loopStartSec: number | null = null
+      let loopEndSec: number | null = null
       if (loopRange) {
-        const loopStartSec = loopRange.start / buffer.sampleRate
-        const loopEndSec = loopRange.end / buffer.sampleRate
+        loopStartSec = loopRange.start / buffer.sampleRate
+        loopEndSec = loopRange.end / buffer.sampleRate
         source.loop = true
         source.loopStart = loopStartSec
         source.loopEnd = loopEndSec
-        source.stop(startAt + loopStartSec + LOOP_PREVIEW_SECONDS)
+        durationSec = loopStartSec + LOOP_PREVIEW_SECONDS
+        source.stop(startAt + durationSec)
       }
+      registerPlayback(key, {
+        startAt,
+        durationSec,
+        loopStartSec,
+        loopEndSec,
+        sampleRate: buffer.sampleRate,
+        totalSamples: buffer.length
+      })
     })
   }
 
@@ -181,6 +267,7 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
             takeIndex={i}
             take={take}
             regionStates={regionStates}
+            playheads={playheads}
             onPlayRegion={playRegion}
             onPlayTake={playTake}
           />
@@ -194,6 +281,7 @@ interface TakeItemProps {
   takeIndex: number
   take: TakeInfo
   regionStates: Record<string, RegionState>
+  playheads: Record<string, number>
   onPlayRegion: (key: string, region: RegionInfo) => void
   onPlayTake: (takeIndex: number, take: TakeInfo, loop: boolean) => void
 }
@@ -202,6 +290,7 @@ function TakeItem({
   takeIndex,
   take,
   regionStates,
+  playheads,
   onPlayRegion,
   onPlayTake
 }: TakeItemProps): React.JSX.Element {
@@ -223,6 +312,7 @@ function TakeItem({
               key={key}
               region={region}
               state={regionStates[key]}
+              playheadFraction={playheads[key]}
               onPlay={() => onPlayRegion(key, region)}
             />
           )
@@ -266,10 +356,11 @@ function TakeItem({
 interface RegionRowProps {
   region: RegionInfo
   state: RegionState | undefined
+  playheadFraction: number | undefined
   onPlay: () => void
 }
 
-function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element {
+function RegionRow({ region, state, playheadFraction, onPlay }: RegionRowProps): React.JSX.Element {
   const [opcodesOpen, setOpcodesOpen] = useState(false)
   const samplePath = region.samplePath
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
@@ -303,6 +394,7 @@ function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element
               peaks={state.peaks}
               totalSamples={state.totalSamples}
               loopRange={regionLoopRange(region)}
+              playheadFraction={playheadFraction}
             />
           )}
         </div>
@@ -400,9 +492,15 @@ interface WaveformProps {
   peaks: Peak[]
   totalSamples: number
   loopRange: { start: number; end: number } | null
+  playheadFraction: number | undefined
 }
 
-function Waveform({ peaks, totalSamples, loopRange }: WaveformProps): React.JSX.Element {
+function Waveform({
+  peaks,
+  totalSamples,
+  loopRange,
+  playheadFraction
+}: WaveformProps): React.JSX.Element {
   return (
     <svg
       viewBox={`0 0 ${peaks.length} 100`}
@@ -426,6 +524,17 @@ function Waveform({ peaks, totalSamples, loopRange }: WaveformProps): React.JSX.
         const height = Math.max(1, bottom - top)
         return <rect key={i} x={i} y={top} width={1} height={height} />
       })}
+      {/* Drawn last (on top of the bars) - this is a live position, not a
+          fixed reference like the loop-region rect above. */}
+      {playheadFraction !== undefined && (
+        <line
+          className="sample-take-list__playhead"
+          x1={playheadFraction * peaks.length}
+          x2={playheadFraction * peaks.length}
+          y1={0}
+          y2={100}
+        />
+      )}
     </svg>
   )
 }
