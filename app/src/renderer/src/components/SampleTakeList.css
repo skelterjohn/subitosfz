@@ -186,3 +186,9 @@
 .sample-take-list__svg rect {
   fill: #4a7fd9;
 }
+
+/* Where loop_start/loop_end currently sit - view-only reference for now,
+   not draggable yet. Same amber used for the grid's selected-cell outline. */
+.sample-take-list__svg rect.sample-take-list__loop-region {
+  fill: rgba(255, 179, 0, 0.25);
+}

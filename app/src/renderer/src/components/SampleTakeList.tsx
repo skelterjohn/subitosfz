@@ -22,7 +22,21 @@ function flattenRegions(cell: CellRecord): FlatRegion[] {
   return out
 }
 
-type RegionState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; peaks: Peak[] }
+type RegionState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'ready'; peaks: Peak[]; totalSamples: number }
+
+// loop_start/loop_end are sample-frame offsets at the file's own native
+// rate - approximated here against the decoded AudioBuffer's length, which
+// can differ slightly if the browser resampled on decode. Fine for a visual
+// reference; not precise enough to drive actual sample-accurate editing.
+function regionLoopRange(region: RegionInfo): { start: number; end: number } | null {
+  const start = Number(region.opcodes.find((op) => op.name === 'loop_start')?.value)
+  const end = Number(region.opcodes.find((op) => op.name === 'loop_end')?.value)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  return { start, end }
+}
 
 // The sample files are routinely mono, with the actual stereo placement
 // coming entirely from the SFZ pan opcode (-100..100) at playback time - a
@@ -78,7 +92,11 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
           buffersRef.current.set(key, audioBuffer)
           setRegionStates((prev) => ({
             ...prev,
-            [key]: { status: 'ready', peaks: computePeaks(audioBuffer, PEAK_BARS) }
+            [key]: {
+              status: 'ready',
+              peaks: computePeaks(audioBuffer, PEAK_BARS),
+              totalSamples: audioBuffer.length
+            }
           }))
         } catch {
           if (!cancelled) setRegionStates((prev) => ({ ...prev, [key]: { status: 'error' } }))
@@ -244,7 +262,13 @@ function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element
           {(!state || state.status === 'loading') && (
             <span className="sample-take-list__status">loading…</span>
           )}
-          {state?.status === 'ready' && <Waveform peaks={state.peaks} />}
+          {state?.status === 'ready' && (
+            <Waveform
+              peaks={state.peaks}
+              totalSamples={state.totalSamples}
+              loopRange={regionLoopRange(region)}
+            />
+          )}
         </div>
         <button
           type="button"
@@ -304,13 +328,30 @@ function computePeaks(buffer: AudioBuffer, bars: number): Peak[] {
   return peaks.map(([min, max]) => [min / peakAbs, max / peakAbs])
 }
 
-function Waveform({ peaks }: { peaks: Peak[] }): React.JSX.Element {
+interface WaveformProps {
+  peaks: Peak[]
+  totalSamples: number
+  loopRange: { start: number; end: number } | null
+}
+
+function Waveform({ peaks, totalSamples, loopRange }: WaveformProps): React.JSX.Element {
   return (
     <svg
       viewBox={`0 0 ${peaks.length} 100`}
       preserveAspectRatio="none"
       className="sample-take-list__svg"
     >
+      {/* Drawn first (behind the bars) - just a reference for where
+          loop_start/loop_end currently sit, not yet editable. */}
+      {loopRange && totalSamples > 0 && (
+        <rect
+          className="sample-take-list__loop-region"
+          x={(loopRange.start / totalSamples) * peaks.length}
+          y={0}
+          width={((loopRange.end - loopRange.start) / totalSamples) * peaks.length}
+          height={100}
+        />
+      )}
       {peaks.map(([min, max], i) => {
         const top = 50 - max * 50
         const bottom = 50 - min * 50
