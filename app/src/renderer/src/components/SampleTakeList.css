@@ -82,6 +82,15 @@
   color: white;
 }
 
+/* Pressing to turn it off - darker amber rather than the plain grey
+   press-state above, since this press starts from the "on" (amber) state
+   rather than the "off" (grey) one. Needs the combined selector's extra
+   specificity to win over the plain :active rule above. */
+.sample-take-list__loop-toggle--active:active {
+  background: #cc8f00;
+  color: white;
+}
+
 /* The regions inside here always fire together on a single note-on (that's
    literally what makes them one take, not separate round-robin
    alternatives) - big and tall, spanning every region's row, rather than
