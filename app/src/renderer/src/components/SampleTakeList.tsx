@@ -187,10 +187,6 @@ function TakeItem({
   onPlayRegion,
   onPlayTake
 }: TakeItemProps): React.JSX.Element {
-  // Only regions within one take actually fire together on a single
-  // note-on (e.g. a stereo L/R pair) - a single-region take has nothing a
-  // combined button would add over its own row's play button.
-  const isGrouped = take.regions.length > 1
   const anyReady = take.regions.some((region, ri) => {
     const key = `${takeIndex}-${ri}-${region.samplePath}`
     return regionStates[key]?.status === 'ready'
@@ -213,18 +209,20 @@ function TakeItem({
           )
         })}
       </div>
-      {isGrouped && (
-        <button
-          type="button"
-          className="sample-take-list__play-take"
-          onClick={() => onPlayTake(takeIndex, take)}
-          disabled={!anyReady}
-          title="Play every region in this take together"
-          aria-label="Play take"
-        >
-          ▶
-        </button>
-      )}
+      {/* The only play control visible on a folded row - an individual
+          region's own play button only shows once its opcode panel is
+          unfolded, so the collapsed view always has exactly one play
+          button regardless of take size. */}
+      <button
+        type="button"
+        className="sample-take-list__play-take"
+        onClick={() => onPlayTake(takeIndex, take)}
+        disabled={!anyReady}
+        title="Play this take"
+        aria-label="Play take"
+      >
+        ▶
+      </button>
     </div>
   )
 }
@@ -248,11 +246,11 @@ function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element
       <div className="sample-take-list__row">
         <button
           type="button"
-          className="sample-take-list__play"
-          onClick={onPlay}
-          disabled={!isReady}
+          className="sample-take-list__toggle"
+          onClick={() => setOpcodesOpen((v) => !v)}
+          aria-label={opcodesOpen ? 'Hide opcodes' : 'Show opcodes'}
         >
-          ▶
+          {opcodesOpen ? '▾' : '▸'}
         </button>
         <span className="sample-take-list__name" title={samplePath}>
           {fileName}
@@ -272,17 +270,21 @@ function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element
             />
           )}
         </div>
-        <button
-          type="button"
-          className="sample-take-list__toggle"
-          onClick={() => setOpcodesOpen((v) => !v)}
-          aria-label={opcodesOpen ? 'Hide opcodes' : 'Show opcodes'}
-        >
-          {opcodesOpen ? '▾' : '▸'}
-        </button>
       </div>
       {opcodesOpen && (
         <div className="sample-take-list__opcodes">
+          {/* This region's own play button - only reachable once unfolded,
+              since the folded row relies on the take's single combined
+              button instead. */}
+          <button
+            type="button"
+            className="sample-take-list__play"
+            onClick={onPlay}
+            disabled={!isReady}
+            aria-label="Play this sample"
+          >
+            ▶
+          </button>
           {/* Globals first (per the backend's own ordering), set off with a
               vertical rail rather than a divider line - local opcodes below
               read as the "default" flush-left case. */}
