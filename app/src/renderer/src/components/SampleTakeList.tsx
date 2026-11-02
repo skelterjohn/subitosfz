@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CellRecord, RegionInfo, TakeInfo } from '../model/instrument'
+import type { CellRecord, OpcodeEntry, RegionInfo, TakeInfo } from '../model/instrument'
 import './SampleTakeList.css'
 
 interface Props {
@@ -240,6 +240,8 @@ function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element
   const samplePath = region.samplePath
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
   const isReady = state?.status === 'ready'
+  const globalOpcodes = region.opcodes.filter((op) => op.isGlobal)
+  const localOpcodes = region.opcodes.filter((op) => !op.isGlobal)
 
   return (
     <div className="sample-take-list__region">
@@ -281,14 +283,37 @@ function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element
       </div>
       {opcodesOpen && (
         <div className="sample-take-list__opcodes">
-          {region.opcodes.map((op) => (
-            <div className="sample-take-list__opcode" key={op.name}>
-              <span className="sample-take-list__opcode-name">{op.name}</span>
-              <span className="sample-take-list__opcode-value">{op.value}</span>
+          {/* Globals first (per the backend's own ordering), set off with a
+              vertical rail rather than a divider line - local opcodes below
+              read as the "default" flush-left case. */}
+          {globalOpcodes.length > 0 && (
+            <div className="sample-take-list__opcode-group">
+              <span className="sample-take-list__opcode-rail">global</span>
+              <div className="sample-take-list__opcode-rows">
+                {globalOpcodes.map((op) => (
+                  <OpcodeRow key={op.name} op={op} />
+                ))}
+              </div>
             </div>
-          ))}
+          )}
+          {localOpcodes.length > 0 && (
+            <div className="sample-take-list__opcode-rows">
+              {localOpcodes.map((op) => (
+                <OpcodeRow key={op.name} op={op} />
+              ))}
+            </div>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+function OpcodeRow({ op }: { op: OpcodeEntry }): React.JSX.Element {
+  return (
+    <div className="sample-take-list__opcode">
+      <span className="sample-take-list__opcode-name">{op.name}</span>
+      <span className="sample-take-list__opcode-value">{op.value}</span>
     </div>
   )
 }

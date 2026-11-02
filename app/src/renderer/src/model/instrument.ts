@@ -32,6 +32,10 @@ export function midiToName(midi: number): string {
 export interface OpcodeEntry {
   name: string
   value: string
+  // True if this came from <global>/<master>/<group> rather than being set
+  // directly on this <region> - i.e. whether you'd have to look above this
+  // specific region in the file to find it.
+  isGlobal: boolean
 }
 
 // One literal <region> within a take - a stereo pair has two of these (L

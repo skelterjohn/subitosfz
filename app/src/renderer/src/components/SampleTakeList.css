@@ -110,9 +110,39 @@
   padding: 0.4rem 0.6rem;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.4rem;
   font-family: monospace;
   font-size: 0.75rem;
+}
+
+/* Opcodes inherited from <global>/<master>/<group> - set off with a rail
+   label rather than mixed in with this region's own opcodes below. */
+.sample-take-list__opcode-group {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.sample-take-list__opcode-rail {
+  flex-shrink: 0;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 0.65rem;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid #eee;
+  padding-right: 0.3rem;
+}
+
+.sample-take-list__opcode-rows {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .sample-take-list__opcode {

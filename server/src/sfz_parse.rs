@@ -43,6 +43,12 @@ pub struct ArticulationInfo {
 pub struct OpcodeEntry {
     pub name: String,
     pub value: String,
+    // True if this opcode's value came from <global>/<master>/<group>
+    // cascading rather than being set directly on this <region> - i.e.
+    // whether you'd have to look above this specific region to find it in
+    // the file. Opcodes are listed globals-first (see where this is built).
+    #[serde(rename = "isGlobal")]
+    pub is_global: bool,
 }
 
 #[derive(Serialize)]
@@ -106,6 +112,17 @@ enum HeaderKind {
 
 type OpcodeMap = BTreeMap<String, String>;
 
+// A region's fully cascaded opcodes, plus which of those keys were set
+// directly on the <region> itself (as opposed to inherited from
+// <global>/<master>/<group>) - the only thing flush_region's merge would
+// otherwise lose, and exactly what the global/local split in the take
+// panel needs.
+#[derive(Clone)]
+struct RawRegion {
+    merged: OpcodeMap,
+    local_keys: BTreeSet<String>,
+}
+
 // A token either starts a new "identifier=value" opcode, or (if it doesn't
 // look like one) continues the previous token's value with a space - this
 // is what lets unquoted values with spaces (e.g. sample paths) survive
@@ -146,14 +163,15 @@ fn flush_region(
     global: &OpcodeMap,
     master: &OpcodeMap,
     group: &OpcodeMap,
-    out: &mut Vec<OpcodeMap>,
+    out: &mut Vec<RawRegion>,
 ) {
     if let Some(r) = region.take() {
+        let local_keys: BTreeSet<String> = r.keys().cloned().collect();
         let mut merged = global.clone();
         merged.extend(master.clone());
         merged.extend(group.clone());
         merged.extend(r);
-        out.push(merged);
+        out.push(RawRegion { merged, local_keys });
     }
 }
 
@@ -210,7 +228,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     let mut region: Option<OpcodeMap> = None;
     let mut header = HeaderKind::None;
 
-    let mut raw_regions: Vec<OpcodeMap> = Vec::new();
+    let mut raw_regions: Vec<RawRegion> = Vec::new();
 
     for token in &tokens {
         if token.starts_with('<') {
@@ -274,6 +292,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     let mut velocities: Vec<VelocityRange> = Vec::new();
 
     for region in &raw_regions {
+        let region = &region.merged;
         if let Some((lo, hi)) = region_key_range(region) {
             lo_bound = Some(lo_bound.map_or(lo, |b: u8| b.min(lo)));
             hi_bound = Some(hi_bound.map_or(hi, |b: u8| b.max(hi)));
@@ -324,8 +343,9 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     // not just the first one found. A stereo pair's two regions share a
     // sound identity (that's what makes them one take), but they're still
     // two distinct real files that both need to stay visible.
-    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), Vec<OpcodeMap>> = BTreeMap::new();
-    for region in &raw_regions {
+    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), Vec<RawRegion>> = BTreeMap::new();
+    for raw in &raw_regions {
+        let region = &raw.merged;
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
             .get("sw_last")
@@ -352,7 +372,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         }
 
         if region.contains_key("sample") {
-            sound_regions.entry((key, identity)).or_default().push(region.clone());
+            sound_regions.entry((key, identity)).or_default().push(raw.clone());
         }
     }
 
@@ -368,12 +388,25 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
                     let regions = group
                         .iter()
                         .filter_map(|region| {
-                            let sample_path = region.get("sample")?.clone();
+                            let sample_path = region.merged.get("sample")?.clone();
+                            // Globals first, then this region's own - both
+                            // groups individually in the map's alphabetical
+                            // order, achieved with two filtered passes over
+                            // the same (already-sorted) iterator.
                             let opcodes = region
+                                .merged
                                 .iter()
+                                .filter(|(name, _)| !region.local_keys.contains(*name))
+                                .chain(
+                                    region
+                                        .merged
+                                        .iter()
+                                        .filter(|(name, _)| region.local_keys.contains(*name))
+                                )
                                 .map(|(name, value)| OpcodeEntry {
                                     name: name.clone(),
-                                    value: value.clone()
+                                    value: value.clone(),
+                                    is_global: !region.local_keys.contains(name)
                                 })
                                 .collect();
                             Some(RegionInfo { sample_path, opcodes })
