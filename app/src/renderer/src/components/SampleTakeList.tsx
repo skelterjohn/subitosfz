@@ -130,8 +130,11 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
   // does too (one note-on fires every region sharing that sound identity).
   // With loop on, each region's own loop_start/loop_end opcodes drive the
   // native AudioBufferSourceNode loop (so a region without a loop range
-  // just plays through once, untouched), and every source is cut off at
-  // the same fixed instant rather than left to loop indefinitely.
+  // just plays through once, untouched). The cutoff is timed from when the
+  // loop actually starts, not from note-on - loop_start commonly sits
+  // several seconds into these files (a long natural attack/decay before
+  // the short sustain segment that gets looped), so a flat "stop 3s after
+  // note-on" would cut playback before it ever reached the loop at all.
   function playTake(takeIndex: number, take: TakeInfo, loop: boolean): void {
     const ctx = audioCtxRef.current
     if (!ctx) return
@@ -147,17 +150,16 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       panner.pan.value = regionPan(region)
       source.connect(panner).connect(ctx.destination)
       const loopRange = loop ? regionLoopRange(region) : null
-      if (loopRange) {
-        source.loop = true
-        source.loopStart = loopRange.start / buffer.sampleRate
-        source.loopEnd = loopRange.end / buffer.sampleRate
-      }
-      // stop() throws if called before start() - the loop cutoff must be
-      // scheduled after start(), even though both calls are just scheduling
-      // future audio events, not synchronous playback themselves.
+      // stop() throws if called before start() - both calls just schedule
+      // future audio events, but the ordering requirement still applies.
       source.start(startAt)
       if (loopRange) {
-        source.stop(startAt + LOOP_PREVIEW_SECONDS)
+        const loopStartSec = loopRange.start / buffer.sampleRate
+        const loopEndSec = loopRange.end / buffer.sampleRate
+        source.loop = true
+        source.loopStart = loopStartSec
+        source.loopEnd = loopEndSec
+        source.stop(startAt + loopStartSec + LOOP_PREVIEW_SECONDS)
       }
     })
   }
