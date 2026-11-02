@@ -461,8 +461,8 @@ function TakeItem({
             min={0}
             step={0.5}
             onChange={(e) => setHoldSeconds(Math.max(0, Number(e.target.value) || 0))}
-            aria-label="Seconds to hold this take's note before release"
-            title="Seconds to hold this take's note before release (uses loop_ and ampeg_ opcodes)"
+            aria-label="Seconds to hold this note"
+            title="Seconds to hold this note"
           />
           <span className="sample-take-list__hold-seconds-unit" aria-hidden="true">
             s
