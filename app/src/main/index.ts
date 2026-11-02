@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
 import { dirname, join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
@@ -64,6 +64,15 @@ function saveLastSession(session: LastSession): void {
   } catch (err) {
     console.error('[main] failed to save last-session.json:', err)
   }
+}
+
+function appIconPath(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'resources', 'icon.png')
+  }
+  // Dev: main process output lives at app/out/main, resources/ is a sibling
+  // of src/ at the app root.
+  return join(__dirname, '../../resources/icon.png')
 }
 
 function sidecarBinaryPath(): string {
@@ -145,6 +154,7 @@ async function createWindow(): Promise<void> {
     y: windowState.y,
     width: windowState.width,
     height: windowState.height,
+    icon: nativeImage.createFromPath(appIconPath()),
     // Native frame (not frame: false) so the application menu set via
     // Menu.setApplicationMenu actually has somewhere to render - a
     // frameless window hides the menu bar entirely, accelerators aside.

@@ -1,0 +1,6 @@
+<svg viewBox="0 0 700 700" xmlns="http://www.w3.org/2000/svg">
+  <rect x="20" y="20" width="640" height="640" rx="70" ry="70" fill="black"/>
+  <path d="M 642,251.37 L 642,590 A 52,52 0 0 1 590,642 L 90,642 A 52,52 0 0 1 38,590 L 38,471.20 Z" fill="white"/>
+  <text x="316" y="296" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="140" font-weight="700" fill="white" transform="rotate(-20 316 296)">subito</text>
+  <text x="450" y="550" font-family="Georgia, 'Times New Roman', serif" font-size="190" font-style="italic" font-weight="700" text-anchor="middle" fill="black">sfz</text>
+</svg>
