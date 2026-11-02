@@ -18,6 +18,10 @@ const api = {
   getLastSfzFile: (): Promise<string | null> => ipcRenderer.invoke('get-last-sfz-file'),
   setLastSfzFile: (filePath: string | null): Promise<void> =>
     ipcRenderer.invoke('set-last-sfz-file', filePath),
+  getLastPivot: (): Promise<{ axis: string; value: string } | null> =>
+    ipcRenderer.invoke('get-last-pivot'),
+  setLastPivot: (axis: string, value: string): Promise<void> =>
+    ipcRenderer.invoke('set-last-pivot', axis, value),
   readAudioFile: (sfzFilePath: string, relativeSamplePath: string): Promise<Uint8Array> =>
     ipcRenderer.invoke('read-audio-file', sfzFilePath, relativeSamplePath),
   onMenuImport: (callback: () => void): (() => void) => onMenuEvent('menu-import', callback),

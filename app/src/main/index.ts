@@ -42,6 +42,8 @@ function saveImportDirs(dirs: ImportDirs): void {
 
 interface LastSession {
   sfzFilePath?: string
+  pivotAxis?: string
+  pivotValue?: string
 }
 
 function lastSessionPath(): string {
@@ -201,7 +203,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('get-last-sfz-file', () => loadLastSession().sfzFilePath ?? null)
 
   ipcMain.handle('set-last-sfz-file', (_event, filePath: string | null) => {
-    saveLastSession({ sfzFilePath: filePath ?? undefined })
+    saveLastSession({ ...loadLastSession(), sfzFilePath: filePath ?? undefined })
+  })
+
+  ipcMain.handle('get-last-pivot', () => {
+    const { pivotAxis, pivotValue } = loadLastSession()
+    if (!pivotAxis || pivotValue === undefined) return null
+    return { axis: pivotAxis, value: pivotValue }
+  })
+
+  ipcMain.handle('set-last-pivot', (_event, axis: string, value: string) => {
+    saveLastSession({ ...loadLastSession(), pivotAxis: axis, pivotValue: value })
   })
 
   ipcMain.handle('read-audio-file', async (_event, sfzFilePath: string, relativeSamplePath: string) => {

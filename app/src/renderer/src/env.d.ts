@@ -12,6 +12,8 @@ declare global {
       chooseSfzFile: () => Promise<string | null>
       getLastSfzFile: () => Promise<string | null>
       setLastSfzFile: (filePath: string | null) => Promise<void>
+      getLastPivot: () => Promise<{ axis: string; value: string } | null>
+      setLastPivot: (axis: string, value: string) => Promise<void>
       readAudioFile: (sfzFilePath: string, relativeSamplePath: string) => Promise<Uint8Array>
       onMenuImport: (callback: () => void) => () => void
       onMenuOpen: (callback: () => void) => () => void

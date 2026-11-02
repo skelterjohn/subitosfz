@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   axisValues,
   cellRange,
@@ -15,6 +15,10 @@ const AXIS_LABEL: Record<Axis, string> = {
   note: 'note',
   articulation: 'articulation',
   velocity: 'velocity'
+}
+
+function isAxis(value: string): value is Axis {
+  return value === 'note' || value === 'articulation' || value === 'velocity'
 }
 
 interface Props {
@@ -123,6 +127,26 @@ export default function InstrumentGrid({
     velocity: axisValues(instrument, 'velocity')[0]?.id ?? ''
   }))
 
+  // Restores whatever pivot was last used, across app restarts - only a
+  // best-effort default, not applied if this instrument doesn't actually
+  // have that axis value (e.g. a different file was opened last time).
+  // Runs once per mount; the grid remounts (key={loadGeneration} in App.tsx)
+  // on every freshly-loaded instrument, so this re-applies on each new load
+  // too, not just app startup.
+  useEffect(() => {
+    if (!window.api) return
+    window.api.getLastPivot().then((pivot) => {
+      if (!pivot || !isAxis(pivot.axis)) return
+      if (!axisValues(instrument, pivot.axis).some((v) => v.id === pivot.value)) return
+      setFixedAxis(pivot.axis)
+      setFixedValues((prev) => ({ ...prev, [pivot.axis as Axis]: pivot.value }))
+    })
+  }, [])
+
+  function persistPivot(axis: Axis, value: string): void {
+    window.api?.setLastPivot(axis, value)
+  }
+
   const layout = useMemo(() => layoutForFixed(fixedAxis), [fixedAxis])
   const fixedAxisValues = useMemo(
     () => axisValues(instrument, layout.fixed),
@@ -132,6 +156,7 @@ export default function InstrumentGrid({
 
   function setFixedValue(id: string): void {
     setFixedValues((prev) => ({ ...prev, [layout.fixed]: id }))
+    persistPivot(layout.fixed, id)
   }
 
   // Clicking a row/column header pivots: its axis becomes the new fixed
@@ -143,12 +168,14 @@ export default function InstrumentGrid({
     const value = unit.lo !== undefined ? String(unit.lo) : unit.id
     setFixedValues((prev) => ({ ...prev, [layout.rows]: value }))
     setFixedAxis(layout.rows)
+    persistPivot(layout.rows, value)
   }
 
   function pivotCol(unit: DisplayUnit): void {
     const value = unit.lo !== undefined ? String(unit.lo) : unit.id
     setFixedValues((prev) => ({ ...prev, [layout.cols]: value }))
     setFixedAxis(layout.cols)
+    persistPivot(layout.cols, value)
   }
 
   const fixedLabel = fixedAxisValues.find((v) => v.id === fixedId)?.label
