@@ -57,11 +57,11 @@ function parseWavSampleRate(bytes: Uint8Array): number | null {
 // where its playhead currently sits - recomputed each animation frame
 // rather than stored as a moving number, since "now" only exists as
 // ctx.currentTime at read time. durationSec is the buffer's own natural
-// duration - used only to normalize a position-in-buffer into a 0..1
-// fraction. It is NOT how long this registration stays alive: a looping
-// region keeps looping right up until the gain envelope's release ramp
-// reaches silence and the source is hard-stopped, which is usually well
-// past durationSec - that real total is scheduledEndSec.
+// duration - the cap on posSec below. It is NOT how long this registration
+// stays alive: a looping region keeps looping right up until the gain
+// envelope's release ramp reaches silence and the source is hard-stopped,
+// which is usually well past durationSec - that real total is
+// scheduledEndSec.
 interface PlaybackInfo {
   startAt: number
   durationSec: number
@@ -70,13 +70,20 @@ interface PlaybackInfo {
   scheduledEndSec: number
 }
 
-// Fraction (0..1) of the waveform's width the playhead currently sits at,
-// or null once playback has finished (or hasn't started yet) - null means
-// "don't draw a line" to the caller. The source keeps looping all the way
-// to scheduledEndSec now (the gain envelope, not a loop-disable switch,
-// is what makes it fade out) so this is just the plain wraparound modulo
-// for the whole active window, no separate "released" phase needed.
-function playbackFraction(info: PlaybackInfo, now: number): number | null {
+// Seconds into this region's own buffer the playhead currently sits at, or
+// null once playback has finished (or hasn't started yet) - null means
+// "don't draw a line" to the caller. Deliberately NOT normalized into a
+// 0..1 fraction here: every region in a take shares the same startAt, so
+// this raw seconds value is what stays comparable across regions of
+// different lengths within one take - the rendering side (Waveform) is
+// what turns it into an x-coordinate, against a shared denominator (the
+// take's longest region) rather than each region's own duration, so
+// playheads for a mismatched-length stereo pair etc. stay aligned instead
+// of each racing to its own finish line. The source keeps looping all the
+// way to scheduledEndSec now (the gain envelope, not a loop-disable
+// switch, is what makes it fade out) so this is just the plain wraparound
+// modulo for the whole active window, no separate "released" phase needed.
+function playbackPositionSec(info: PlaybackInfo, now: number): number | null {
   const elapsed = now - info.startAt
   if (elapsed < 0 || elapsed > info.scheduledEndSec) return null
   let posSec = elapsed
@@ -84,7 +91,7 @@ function playbackFraction(info: PlaybackInfo, now: number): number | null {
     const loopLen = info.loopEndSec - info.loopStartSec
     posSec = info.loopStartSec + ((elapsed - info.loopStartSec) % loopLen)
   }
-  return Math.min(1, posSec / info.durationSec)
+  return Math.min(posSec, info.durationSec)
 }
 
 // ampeg_* opcodes, with the SFZ spec's own defaults for anything absent:
@@ -161,6 +168,8 @@ function regionPan(region: RegionInfo): number {
 // time, instead of re-fetching/re-decoding on click.
 export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.Element {
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
+  // Seconds into each actively-sounding region's own buffer, not a 0..1
+  // fraction - see playbackPositionSec for why.
   const [playheads, setPlayheads] = useState<Record<string, number>>({})
   const audioCtxRef = useRef<AudioContext | null>(null)
   const buffersRef = useRef<Map<string, AudioBuffer>>(new Map())
@@ -195,8 +204,8 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
         return
       }
       if (elapsed < 0) return
-      const frac = playbackFraction(info, now)
-      if (frac !== null) next[key] = frac
+      const posSec = playbackPositionSec(info, now)
+      if (posSec !== null) next[key] = posSec
     })
     setPlayheads(next)
     rafRef.current = activePlaybackRef.current.size > 0 ? requestAnimationFrame(tick) : null
@@ -404,6 +413,19 @@ function TakeItem({
     const key = `${takeIndex}-${ri}-${region.samplePath}`
     return regionStates[key]?.status === 'ready'
   })
+  // Regions in a take play simultaneously (same note-on), so their
+  // waveforms should share one timeline - the longest region fills the
+  // box, shorter ones occupy a proportionally smaller slice of it, and a
+  // playhead at a given moment in real time lands at the same x in every
+  // region's row rather than each racing to its own right edge.
+  const takeMaxDurationSec = Math.max(
+    0,
+    ...take.regions.map((region, ri) => {
+      const key = `${takeIndex}-${ri}-${region.samplePath}`
+      const s = regionStates[key]
+      return s?.status === 'ready' ? s.durationSec : 0
+    })
+  )
 
   return (
     <div className="sample-take-list__item">
@@ -417,7 +439,8 @@ function TakeItem({
               key={key}
               region={region}
               state={regionStates[key]}
-              playheadFraction={playheads[key]}
+              takeMaxDurationSec={takeMaxDurationSec}
+              playheadPositionSec={playheads[key]}
               onPlay={() => onPlayRegion(key, region)}
             />
           )
@@ -463,11 +486,18 @@ function TakeItem({
 interface RegionRowProps {
   region: RegionInfo
   state: RegionState | undefined
-  playheadFraction: number | undefined
+  takeMaxDurationSec: number
+  playheadPositionSec: number | undefined
   onPlay: () => void
 }
 
-function RegionRow({ region, state, playheadFraction, onPlay }: RegionRowProps): React.JSX.Element {
+function RegionRow({
+  region,
+  state,
+  takeMaxDurationSec,
+  playheadPositionSec,
+  onPlay
+}: RegionRowProps): React.JSX.Element {
   const [opcodesOpen, setOpcodesOpen] = useState(false)
   const samplePath = region.samplePath
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
@@ -503,8 +533,9 @@ function RegionRow({ region, state, playheadFraction, onPlay }: RegionRowProps):
             <Waveform
               peaks={state.peaks}
               durationSec={state.durationSec}
+              takeMaxDurationSec={Math.max(takeMaxDurationSec, state.durationSec)}
               loopRangeSec={regionLoopRangeSec(region, state.nativeSampleRate)}
-              playheadFraction={playheadFraction}
+              playheadPositionSec={playheadPositionSec}
             />
           )}
         </div>
@@ -599,30 +630,45 @@ function computePeaks(buffer: AudioBuffer, bars: number): Peak[] {
 interface WaveformProps {
   peaks: Peak[]
   durationSec: number
+  // The longest region among this take's simultaneously-playing regions -
+  // the shared denominator that keeps a shorter region's waveform (and its
+  // playhead) scaled against the same timeline as its longer siblings,
+  // rather than each stretching to fill its own box regardless of length.
+  // Equals durationSec itself for the common single-region/equal-length
+  // case, which keeps this pixel-identical to the old per-region scaling.
+  takeMaxDurationSec: number
   loopRangeSec: { start: number; end: number } | null
-  playheadFraction: number | undefined
+  playheadPositionSec: number | undefined
 }
 
 function Waveform({
   peaks,
   durationSec,
+  takeMaxDurationSec,
   loopRangeSec,
-  playheadFraction
+  playheadPositionSec
 }: WaveformProps): React.JSX.Element {
+  // Seconds -> viewBox x units, shared across every region in the take so
+  // a shorter region's bars/loop-box/playhead all land at the same x a
+  // longer sibling's would at that same moment, instead of each being
+  // independently stretched to fill the full box width.
+  const scale = takeMaxDurationSec > 0 ? PEAK_BARS / takeMaxDurationSec : 0
+  const barDurationSec = peaks.length > 0 ? durationSec / peaks.length : 0
+
   return (
     <svg
-      viewBox={`0 0 ${peaks.length} 100`}
+      viewBox={`0 0 ${PEAK_BARS} 100`}
       preserveAspectRatio="none"
       className="sample-take-list__svg"
     >
       {/* Drawn first (behind the bars) - just a reference for where
           loop_start/loop_end currently sit, not yet editable. */}
-      {loopRangeSec && durationSec > 0 && (
+      {loopRangeSec && (
         <rect
           className="sample-take-list__loop-region"
-          x={(loopRangeSec.start / durationSec) * peaks.length}
+          x={loopRangeSec.start * scale}
           y={0}
-          width={((loopRangeSec.end - loopRangeSec.start) / durationSec) * peaks.length}
+          width={(loopRangeSec.end - loopRangeSec.start) * scale}
           height={100}
         />
       )}
@@ -630,15 +676,23 @@ function Waveform({
         const top = 50 - max * 50
         const bottom = 50 - min * 50
         const height = Math.max(1, bottom - top)
-        return <rect key={i} x={i} y={top} width={1} height={height} />
+        return (
+          <rect
+            key={i}
+            x={i * barDurationSec * scale}
+            y={top}
+            width={Math.max(barDurationSec * scale, 0.5)}
+            height={height}
+          />
+        )
       })}
       {/* Drawn last (on top of the bars) - this is a live position, not a
           fixed reference like the loop-region rect above. */}
-      {playheadFraction !== undefined && (
+      {playheadPositionSec !== undefined && (
         <line
           className="sample-take-list__playhead"
-          x1={playheadFraction * peaks.length}
-          x2={playheadFraction * peaks.length}
+          x1={playheadPositionSec * scale}
+          x2={playheadPositionSec * scale}
           y1={0}
           y2={100}
         />
