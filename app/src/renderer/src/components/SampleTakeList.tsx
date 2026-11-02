@@ -56,10 +56,12 @@ function parseWavSampleRate(bytes: Uint8Array): number | null {
 // What a currently-sounding region needs in order to compute, on demand,
 // where its playhead currently sits - recomputed each animation frame
 // rather than stored as a moving number, since "now" only exists as
-// ctx.currentTime at read time. durationSec is always the buffer's own
-// natural duration: a looped take preview now runs the loop for a while
-// and then continues into the sample's own tail rather than being cut off
-// mid-loop, so it always ends wherever the file itself ends.
+// ctx.currentTime at read time. durationSec is the buffer's own natural
+// duration - used only to normalize a position-in-buffer into a 0..1
+// fraction. It is NOT how long this registration stays alive: while
+// looping, real elapsed time keeps growing well past durationSec (the
+// loop can run for several more seconds), so "finished" is tracked
+// separately via scheduledEndSec.
 interface PlaybackInfo {
   startAt: number
   durationSec: number
@@ -69,6 +71,10 @@ interface PlaybackInfo {
   // looping at all) - after this instant playback keeps going forward from
   // wherever it was in the loop cycle, rather than wrapping again.
   loopReleaseAt: number | null
+  // Elapsed time (relative to startAt) at which this playback is actually
+  // done - durationSec for a non-looping play, or (loop release point) +
+  // (remaining tail after the position it released at) for a looped one.
+  scheduledEndSec: number
 }
 
 // Fraction (0..1) of the waveform's width the playhead currently sits at,
@@ -76,7 +82,7 @@ interface PlaybackInfo {
 // "don't draw a line" to the caller.
 function playbackFraction(info: PlaybackInfo, now: number): number | null {
   const elapsed = now - info.startAt
-  if (elapsed < 0 || elapsed > info.durationSec) return null
+  if (elapsed < 0 || elapsed > info.scheduledEndSec) return null
   let posSec = elapsed
   if (info.loopStartSec !== null && info.loopEndSec !== null && elapsed > info.loopStartSec) {
     const loopLen = info.loopEndSec - info.loopStartSec
@@ -161,8 +167,13 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       // Scheduled a little into the future for sync (see startAt below) -
       // the first frame or two can land before it actually starts, which is
       // "nothing to draw yet", not "finished" - only drop the entry once
-      // we're actually past its end.
-      if (elapsed > info.durationSec) {
+      // we're actually past scheduledEndSec, NOT durationSec: while
+      // looping, elapsed keeps growing well past durationSec (loop_end
+      // commonly sits right at the file's natural end, so elapsed crosses
+      // durationSec almost immediately after entering the loop, while the
+      // AudioBufferSourceNode itself keeps looping for real independent of
+      // this bookkeeping).
+      if (elapsed > info.scheduledEndSec) {
         activePlaybackRef.current.delete(key)
         return
       }
@@ -247,7 +258,8 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       durationSec: buffer.duration,
       loopStartSec: null,
       loopEndSec: null,
-      loopReleaseAt: null
+      loopReleaseAt: null,
+      scheduledEndSec: buffer.duration
     })
   }
 
@@ -283,6 +295,7 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       let loopStartSec: number | null = null
       let loopEndSec: number | null = null
       let loopReleaseAt: number | null = null
+      let scheduledEndSec = buffer.duration
       if (loopRange) {
         loopStartSec = loopRange.start
         loopEndSec = loopRange.end
@@ -301,13 +314,23 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
         setTimeout(() => {
           source.loop = false
         }, delayMs)
+        // The real stop point: how far past startAt this keeps sounding
+        // once the loop releases and plays out whatever's left of the
+        // buffer from wherever it was in the cycle - usually well past
+        // durationSec, since the loop runs for LOOP_PREVIEW_SECONDS on its
+        // own regardless of how short the buffer itself is.
+        const releaseElapsed = loopStartSec + LOOP_PREVIEW_SECONDS
+        const loopLen = loopEndSec - loopStartSec
+        const posAtRelease = loopStartSec + ((releaseElapsed - loopStartSec) % loopLen)
+        scheduledEndSec = releaseElapsed + (buffer.duration - posAtRelease)
       }
       registerPlayback(key, {
         startAt,
         durationSec: buffer.duration,
         loopStartSec,
         loopEndSec,
-        loopReleaseAt
+        loopReleaseAt,
+        scheduledEndSec
       })
     })
   }
