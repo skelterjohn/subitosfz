@@ -25,19 +25,24 @@ function flattenRegions(cell: CellRecord): FlatRegion[] {
 type RegionState =
   | { status: 'loading' }
   | { status: 'error' }
-  | { status: 'ready'; peaks: Peak[]; totalSamples: number; sampleRate: number }
+  | { status: 'ready'; peaks: Peak[]; totalSamples: number }
 
 // What a currently-sounding region needs in order to compute, on demand,
 // where its playhead currently sits - recomputed each animation frame
 // rather than stored as a moving number, since "now" only exists as
-// ctx.currentTime at read time.
+// ctx.currentTime at read time. durationSec is always the buffer's own
+// natural duration: a looped take preview now runs the loop for a while
+// and then continues into the sample's own tail rather than being cut off
+// mid-loop, so it always ends wherever the file itself ends.
 interface PlaybackInfo {
   startAt: number
   durationSec: number
   loopStartSec: number | null
   loopEndSec: number | null
-  sampleRate: number
-  totalSamples: number
+  // ctx-time instant looping gets switched off (null if this play isn't
+  // looping at all) - after this instant playback keeps going forward from
+  // wherever it was in the loop cycle, rather than wrapping again.
+  loopReleaseAt: number | null
 }
 
 // Fraction (0..1) of the waveform's width the playhead currently sits at,
@@ -49,11 +54,19 @@ function playbackFraction(info: PlaybackInfo, now: number): number | null {
   let posSec = elapsed
   if (info.loopStartSec !== null && info.loopEndSec !== null && elapsed > info.loopStartSec) {
     const loopLen = info.loopEndSec - info.loopStartSec
-    posSec = info.loopStartSec + ((elapsed - info.loopStartSec) % loopLen)
+    const releaseElapsed =
+      info.loopReleaseAt !== null ? info.loopReleaseAt - info.startAt : Infinity
+    if (elapsed < releaseElapsed) {
+      posSec = info.loopStartSec + ((elapsed - info.loopStartSec) % loopLen)
+    } else {
+      // Loop has been switched off - keep advancing linearly from exactly
+      // where it was in the loop cycle at the moment of release, matching
+      // what the AudioBufferSourceNode itself actually does.
+      const posAtRelease = info.loopStartSec + ((releaseElapsed - info.loopStartSec) % loopLen)
+      posSec = posAtRelease + (elapsed - releaseElapsed)
+    }
   }
-  const durationSecOfBuffer = info.totalSamples / info.sampleRate
-  if (durationSecOfBuffer <= 0) return null
-  return Math.min(1, posSec / durationSecOfBuffer)
+  return Math.min(1, posSec / info.durationSec)
 }
 
 // loop_start/loop_end are sample-frame offsets at the file's own native
@@ -168,8 +181,7 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
             [key]: {
               status: 'ready',
               peaks: computePeaks(audioBuffer, PEAK_BARS),
-              totalSamples: audioBuffer.length,
-              sampleRate: audioBuffer.sampleRate
+              totalSamples: audioBuffer.length
             }
           }))
         } catch {
@@ -202,8 +214,7 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       durationSec: buffer.duration,
       loopStartSec: null,
       loopEndSec: null,
-      sampleRate: buffer.sampleRate,
-      totalSamples: buffer.length
+      loopReleaseAt: null
     })
   }
 
@@ -213,11 +224,11 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
   // does too (one note-on fires every region sharing that sound identity).
   // With loop on, each region's own loop_start/loop_end opcodes drive the
   // native AudioBufferSourceNode loop (so a region without a loop range
-  // just plays through once, untouched). The cutoff is timed from when the
-  // loop actually starts, not from note-on - loop_start commonly sits
+  // just plays through once, untouched). The loop point is timed from when
+  // the loop actually starts, not from note-on - loop_start commonly sits
   // several seconds into these files (a long natural attack/decay before
-  // the short sustain segment that gets looped), so a flat "stop 3s after
-  // note-on" would cut playback before it ever reached the loop at all.
+  // the short sustain segment that gets looped), so a flat "N seconds after
+  // note-on" would switch the loop off before it was ever reached.
   function playTake(takeIndex: number, take: TakeInfo, loop: boolean): void {
     const ctx = audioCtxRef.current
     if (!ctx) return
@@ -233,28 +244,35 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       panner.pan.value = regionPan(region)
       source.connect(panner).connect(ctx.destination)
       const loopRange = loop ? regionLoopRange(region) : null
-      // stop() throws if called before start() - both calls just schedule
-      // future audio events, but the ordering requirement still applies.
       source.start(startAt)
-      let durationSec = buffer.duration
       let loopStartSec: number | null = null
       let loopEndSec: number | null = null
+      let loopReleaseAt: number | null = null
       if (loopRange) {
         loopStartSec = loopRange.start / buffer.sampleRate
         loopEndSec = loopRange.end / buffer.sampleRate
         source.loop = true
         source.loopStart = loopStartSec
         source.loopEnd = loopEndSec
-        durationSec = loopStartSec + LOOP_PREVIEW_SECONDS
-        source.stop(startAt + durationSec)
+        loopReleaseAt = startAt + loopStartSec + LOOP_PREVIEW_SECONDS
+        // No stop() here - switching the loop flag off (rather than
+        // stopping the node) lets it keep playing forward from wherever
+        // it is in the loop cycle, through to the sample's own natural
+        // end/tail, instead of cutting it off mid-loop. There's no
+        // sample-accurate way to schedule a plain attribute flip, so this
+        // is a JS timer against wall-clock time rather than the audio
+        // clock - fine for a preview control, not meant to be sample-exact.
+        const delayMs = Math.max(0, (loopReleaseAt - ctx.currentTime) * 1000)
+        setTimeout(() => {
+          source.loop = false
+        }, delayMs)
       }
       registerPlayback(key, {
         startAt,
-        durationSec,
+        durationSec: buffer.duration,
         loopStartSec,
         loopEndSec,
-        sampleRate: buffer.sampleRate,
-        totalSamples: buffer.length
+        loopReleaseAt
       })
     })
   }
