@@ -25,7 +25,33 @@ function flattenRegions(cell: CellRecord): FlatRegion[] {
 type RegionState =
   | { status: 'loading' }
   | { status: 'error' }
-  | { status: 'ready'; peaks: Peak[]; totalSamples: number }
+  | { status: 'ready'; peaks: Peak[]; durationSec: number; nativeSampleRate: number }
+
+// Reads just the sample rate out of a RIFF/WAVE file's 'fmt ' chunk,
+// independent of whatever rate decodeAudioData resamples to on the way in.
+// loop_start/loop_end in the sfz are sample-frame offsets at the file's OWN
+// rate, and Chromium silently resamples on decode whenever that differs
+// from the output device's rate (e.g. these files are 44100Hz, but a
+// 48000Hz audio device makes decodeAudioData hand back a 48000Hz buffer) -
+// dividing the raw opcode values by the decoded buffer's sampleRate would
+// scale every loop point wrong by that same ratio. Returns null (falling
+// back to the decoded rate) for anything that isn't a plain RIFF/WAVE file.
+function parseWavSampleRate(bytes: Uint8Array): number | null {
+  if (bytes.length < 12) return null
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const tag = (offset: number): string => String.fromCharCode(...bytes.subarray(offset, offset + 4))
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null
+  let offset = 12
+  while (offset + 8 <= bytes.length) {
+    const id = tag(offset)
+    const size = view.getUint32(offset + 4, true)
+    if (id === 'fmt ' && offset + 16 <= bytes.length) {
+      return view.getUint32(offset + 12, true)
+    }
+    offset += 8 + size + (size % 2)
+  }
+  return null
+}
 
 // What a currently-sounding region needs in order to compute, on demand,
 // where its playhead currently sits - recomputed each animation frame
@@ -70,14 +96,19 @@ function playbackFraction(info: PlaybackInfo, now: number): number | null {
 }
 
 // loop_start/loop_end are sample-frame offsets at the file's own native
-// rate - approximated here against the decoded AudioBuffer's length, which
-// can differ slightly if the browser resampled on decode. Fine for a visual
-// reference; not precise enough to drive actual sample-accurate editing.
-function regionLoopRange(region: RegionInfo): { start: number; end: number } | null {
-  const start = Number(region.opcodes.find((op) => op.name === 'loop_start')?.value)
-  const end = Number(region.opcodes.find((op) => op.name === 'loop_end')?.value)
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
-  return { start, end }
+// rate - converted to seconds here using that same native rate (not the
+// decoded buffer's, possibly-resampled, rate) so this lines up with
+// durationSec regardless of what the output device resampled to.
+function regionLoopRangeSec(
+  region: RegionInfo,
+  nativeSampleRate: number
+): { start: number; end: number } | null {
+  const startFrames = Number(region.opcodes.find((op) => op.name === 'loop_start')?.value)
+  const endFrames = Number(region.opcodes.find((op) => op.name === 'loop_end')?.value)
+  if (!Number.isFinite(startFrames) || !Number.isFinite(endFrames) || endFrames <= startFrames) {
+    return null
+  }
+  return { start: startFrames / nativeSampleRate, end: endFrames / nativeSampleRate }
 }
 
 // The sample files are routinely mono, with the actual stereo placement
@@ -169,6 +200,7 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       ;(async () => {
         try {
           const bytes = await window.api.readAudioFile(sfzFilePath, region.samplePath)
+          const nativeSampleRate = parseWavSampleRate(bytes)
           // Copy into a right-sized standalone buffer - decodeAudioData
           // wants an ArrayBuffer, and the IPC-returned view may sit on a
           // differently sized backing buffer.
@@ -181,7 +213,8 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
             [key]: {
               status: 'ready',
               peaks: computePeaks(audioBuffer, PEAK_BARS),
-              totalSamples: audioBuffer.length
+              durationSec: audioBuffer.duration,
+              nativeSampleRate: nativeSampleRate ?? audioBuffer.sampleRate
             }
           }))
         } catch {
@@ -238,19 +271,21 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       const key = `${takeIndex}-${ri}-${region.samplePath}`
       const buffer = buffersRef.current.get(key)
       if (!buffer) return
+      const state = regionStates[key]
+      const nativeSampleRate = state?.status === 'ready' ? state.nativeSampleRate : buffer.sampleRate
       const source = ctx.createBufferSource()
       source.buffer = buffer
       const panner = ctx.createStereoPanner()
       panner.pan.value = regionPan(region)
       source.connect(panner).connect(ctx.destination)
-      const loopRange = loop ? regionLoopRange(region) : null
+      const loopRange = loop ? regionLoopRangeSec(region, nativeSampleRate) : null
       source.start(startAt)
       let loopStartSec: number | null = null
       let loopEndSec: number | null = null
       let loopReleaseAt: number | null = null
       if (loopRange) {
-        loopStartSec = loopRange.start / buffer.sampleRate
-        loopEndSec = loopRange.end / buffer.sampleRate
+        loopStartSec = loopRange.start
+        loopEndSec = loopRange.end
         source.loop = true
         source.loopStart = loopStartSec
         source.loopEnd = loopEndSec
@@ -419,8 +454,8 @@ function RegionRow({ region, state, playheadFraction, onPlay }: RegionRowProps):
           {state?.status === 'ready' && (
             <Waveform
               peaks={state.peaks}
-              totalSamples={state.totalSamples}
-              loopRange={regionLoopRange(region)}
+              durationSec={state.durationSec}
+              loopRangeSec={regionLoopRangeSec(region, state.nativeSampleRate)}
               playheadFraction={playheadFraction}
             />
           )}
@@ -517,15 +552,15 @@ function computePeaks(buffer: AudioBuffer, bars: number): Peak[] {
 
 interface WaveformProps {
   peaks: Peak[]
-  totalSamples: number
-  loopRange: { start: number; end: number } | null
+  durationSec: number
+  loopRangeSec: { start: number; end: number } | null
   playheadFraction: number | undefined
 }
 
 function Waveform({
   peaks,
-  totalSamples,
-  loopRange,
+  durationSec,
+  loopRangeSec,
   playheadFraction
 }: WaveformProps): React.JSX.Element {
   return (
@@ -536,12 +571,12 @@ function Waveform({
     >
       {/* Drawn first (behind the bars) - just a reference for where
           loop_start/loop_end currently sit, not yet editable. */}
-      {loopRange && totalSamples > 0 && (
+      {loopRangeSec && durationSec > 0 && (
         <rect
           className="sample-take-list__loop-region"
-          x={(loopRange.start / totalSamples) * peaks.length}
+          x={(loopRangeSec.start / durationSec) * peaks.length}
           y={0}
-          width={((loopRange.end - loopRange.start) / totalSamples) * peaks.length}
+          width={((loopRangeSec.end - loopRangeSec.start) / durationSec) * peaks.length}
           height={100}
         />
       )}
