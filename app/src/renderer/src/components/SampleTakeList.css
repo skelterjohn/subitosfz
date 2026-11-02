@@ -72,7 +72,7 @@
   line-height: 1;
 }
 
-.sample-take-list__loop-toggle:hover {
+.sample-take-list__loop-toggle:active {
   background: #e6e6e6;
   color: #555;
 }
