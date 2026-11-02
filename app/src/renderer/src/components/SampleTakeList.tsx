@@ -151,9 +151,14 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
         source.loop = true
         source.loopStart = loopRange.start / buffer.sampleRate
         source.loopEnd = loopRange.end / buffer.sampleRate
+      }
+      // stop() throws if called before start() - the loop cutoff must be
+      // scheduled after start(), even though both calls are just scheduling
+      // future audio events, not synchronous playback themselves.
+      source.start(startAt)
+      if (loopRange) {
         source.stop(startAt + LOOP_PREVIEW_SECONDS)
       }
-      source.start(startAt)
     })
   }
 
