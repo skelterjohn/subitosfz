@@ -58,47 +58,60 @@ function parseWavSampleRate(bytes: Uint8Array): number | null {
 // rather than stored as a moving number, since "now" only exists as
 // ctx.currentTime at read time. durationSec is the buffer's own natural
 // duration - used only to normalize a position-in-buffer into a 0..1
-// fraction. It is NOT how long this registration stays alive: while
-// looping, real elapsed time keeps growing well past durationSec (the
-// loop can run for several more seconds), so "finished" is tracked
-// separately via scheduledEndSec.
+// fraction. It is NOT how long this registration stays alive: a looping
+// region keeps looping right up until the gain envelope's release ramp
+// reaches silence and the source is hard-stopped, which is usually well
+// past durationSec - that real total is scheduledEndSec.
 interface PlaybackInfo {
   startAt: number
   durationSec: number
   loopStartSec: number | null
   loopEndSec: number | null
-  // ctx-time instant looping gets switched off (null if this play isn't
-  // looping at all) - after this instant playback keeps going forward from
-  // wherever it was in the loop cycle, rather than wrapping again.
-  loopReleaseAt: number | null
-  // Elapsed time (relative to startAt) at which this playback is actually
-  // done - durationSec for a non-looping play, or (loop release point) +
-  // (remaining tail after the position it released at) for a looped one.
   scheduledEndSec: number
 }
 
 // Fraction (0..1) of the waveform's width the playhead currently sits at,
 // or null once playback has finished (or hasn't started yet) - null means
-// "don't draw a line" to the caller.
+// "don't draw a line" to the caller. The source keeps looping all the way
+// to scheduledEndSec now (the gain envelope, not a loop-disable switch,
+// is what makes it fade out) so this is just the plain wraparound modulo
+// for the whole active window, no separate "released" phase needed.
 function playbackFraction(info: PlaybackInfo, now: number): number | null {
   const elapsed = now - info.startAt
   if (elapsed < 0 || elapsed > info.scheduledEndSec) return null
   let posSec = elapsed
   if (info.loopStartSec !== null && info.loopEndSec !== null && elapsed > info.loopStartSec) {
     const loopLen = info.loopEndSec - info.loopStartSec
-    const releaseElapsed =
-      info.loopReleaseAt !== null ? info.loopReleaseAt - info.startAt : Infinity
-    if (elapsed < releaseElapsed) {
-      posSec = info.loopStartSec + ((elapsed - info.loopStartSec) % loopLen)
-    } else {
-      // Loop has been switched off - keep advancing linearly from exactly
-      // where it was in the loop cycle at the moment of release, matching
-      // what the AudioBufferSourceNode itself actually does.
-      const posAtRelease = info.loopStartSec + ((releaseElapsed - info.loopStartSec) % loopLen)
-      posSec = posAtRelease + (elapsed - releaseElapsed)
-    }
+    posSec = info.loopStartSec + ((elapsed - info.loopStartSec) % loopLen)
   }
   return Math.min(1, posSec / info.durationSec)
+}
+
+// ampeg_* opcodes, with the SFZ spec's own defaults for anything absent:
+// no attack/hold/decay ramp (instant full volume), full sustain (no decay
+// floor), instant release. sustain is a PERCENTAGE of full gain, not
+// seconds, per spec.
+interface AmpegEnvelope {
+  attack: number
+  hold: number
+  decay: number
+  sustainFrac: number
+  release: number
+}
+
+function regionAmpeg(region: RegionInfo): AmpegEnvelope {
+  const num = (name: string, fallback: number): number => {
+    const raw = region.opcodes.find((op) => op.name === name)?.value
+    const v = raw === undefined ? NaN : Number(raw)
+    return Number.isFinite(v) ? v : fallback
+  }
+  return {
+    attack: Math.max(0, num('ampeg_attack', 0)),
+    hold: Math.max(0, num('ampeg_hold', 0)),
+    decay: Math.max(0, num('ampeg_decay', 0)),
+    sustainFrac: Math.min(1, Math.max(0, num('ampeg_sustain', 100) / 100)),
+    release: Math.max(0, num('ampeg_release', 0))
+  }
 }
 
 // loop_start/loop_end are sample-frame offsets at the file's own native
@@ -258,7 +271,6 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       durationSec: buffer.duration,
       loopStartSec: null,
       loopEndSec: null,
-      loopReleaseAt: null,
       scheduledEndSec: buffer.duration
     })
   }
@@ -267,14 +279,20 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
   // rather than started back-to-back in a loop, so node-creation overhead
   // doesn't stagger the actual playback - this is what real SFZ playback
   // does too (one note-on fires every region sharing that sound identity).
-  // With loop on, each region's own loop_start/loop_end opcodes drive the
-  // native AudioBufferSourceNode loop (so a region without a loop range
-  // just plays through once, untouched). The loop point is timed from when
-  // the loop actually starts, not from note-on - loop_start commonly sits
-  // several seconds into these files (a long natural attack/decay before
-  // the short sustain segment that gets looped), so a flat "N seconds after
-  // note-on" would switch the loop off before it was ever reached.
-  function playTake(takeIndex: number, take: TakeInfo, loop: boolean): void {
+  //
+  // Simulates holding the note for holdSeconds then releasing it, the same
+  // way a real synth voice works: each region's own loop_start/loop_end (if
+  // present) keeps it sounding indefinitely regardless of how short the
+  // file is, while a GainNode automates the real ampeg_attack/hold/decay/
+  // sustain/release envelope on top - attack/hold/decay play out from
+  // note-on, then holds at the sustain level until holdSeconds, then
+  // releases to silence. cancelAndHoldAtTime handles releasing cleanly
+  // from wherever the envelope actually is at that instant, even mid-ramp
+  // (e.g. holdSeconds shorter than attack+hold+decay). The source is
+  // hard-stopped once the release ramp reaches 0 - by then it's silent, so
+  // there's no click, and no need to separately manage switching the loop
+  // off and hoping there's enough of a file tail left to play into.
+  function playTake(takeIndex: number, take: TakeInfo, holdSeconds: number): void {
     const ctx = audioCtxRef.current
     if (!ctx) return
     ctx.resume()
@@ -287,50 +305,48 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       const nativeSampleRate = state?.status === 'ready' ? state.nativeSampleRate : buffer.sampleRate
       const source = ctx.createBufferSource()
       source.buffer = buffer
+      const gain = ctx.createGain()
       const panner = ctx.createStereoPanner()
       panner.pan.value = regionPan(region)
-      source.connect(panner).connect(ctx.destination)
-      const loopRange = loop ? regionLoopRangeSec(region, nativeSampleRate) : null
-      source.start(startAt)
+      source.connect(gain).connect(panner).connect(ctx.destination)
+
+      const loopRange = regionLoopRangeSec(region, nativeSampleRate)
       let loopStartSec: number | null = null
       let loopEndSec: number | null = null
-      let loopReleaseAt: number | null = null
-      let scheduledEndSec = buffer.duration
       if (loopRange) {
         loopStartSec = loopRange.start
         loopEndSec = loopRange.end
         source.loop = true
         source.loopStart = loopStartSec
         source.loopEnd = loopEndSec
-        loopReleaseAt = startAt + loopStartSec + LOOP_PREVIEW_SECONDS
-        // No stop() here - switching the loop flag off (rather than
-        // stopping the node) lets it keep playing forward from wherever
-        // it is in the loop cycle, through to the sample's own natural
-        // end/tail, instead of cutting it off mid-loop. There's no
-        // sample-accurate way to schedule a plain attribute flip, so this
-        // is a JS timer against wall-clock time rather than the audio
-        // clock - fine for a preview control, not meant to be sample-exact.
-        const delayMs = Math.max(0, (loopReleaseAt - ctx.currentTime) * 1000)
-        setTimeout(() => {
-          source.loop = false
-        }, delayMs)
-        // The real stop point: how far past startAt this keeps sounding
-        // once the loop releases and plays out whatever's left of the
-        // buffer from wherever it was in the cycle - usually well past
-        // durationSec, since the loop runs for LOOP_PREVIEW_SECONDS on its
-        // own regardless of how short the buffer itself is.
-        const releaseElapsed = loopStartSec + LOOP_PREVIEW_SECONDS
-        const loopLen = loopEndSec - loopStartSec
-        const posAtRelease = loopStartSec + ((releaseElapsed - loopStartSec) % loopLen)
-        scheduledEndSec = releaseElapsed + (buffer.duration - posAtRelease)
       }
+
+      const env = regionAmpeg(region)
+      const attackEnd = startAt + env.attack
+      const holdEnd = attackEnd + env.hold
+      const decayEnd = holdEnd + env.decay
+      gain.gain.setValueAtTime(0, startAt)
+      gain.gain.linearRampToValueAtTime(1, attackEnd)
+      gain.gain.setValueAtTime(1, holdEnd)
+      gain.gain.linearRampToValueAtTime(env.sustainFrac, decayEnd)
+
+      const releaseAt = Math.max(startAt, startAt + holdSeconds)
+      gain.gain.cancelAndHoldAtTime(releaseAt)
+      // A floor on the release ramp length, not a reinterpretation of the
+      // opcode - release=0 is valid and means "as fast as possible", but a
+      // literal zero-length ramp is a discontinuity that clicks.
+      const releaseEnd = releaseAt + Math.max(env.release, 0.005)
+      gain.gain.linearRampToValueAtTime(0, releaseEnd)
+
+      source.start(startAt)
+      source.stop(releaseEnd)
+
       registerPlayback(key, {
         startAt,
         durationSec: buffer.duration,
         loopStartSec,
         loopEndSec,
-        loopReleaseAt,
-        scheduledEndSec
+        scheduledEndSec: releaseEnd - startAt
       })
     })
   }
@@ -368,7 +384,7 @@ interface TakeItemProps {
   regionStates: Record<string, RegionState>
   playheads: Record<string, number>
   onPlayRegion: (key: string, region: RegionInfo) => void
-  onPlayTake: (takeIndex: number, take: TakeInfo, loop: boolean) => void
+  onPlayTake: (takeIndex: number, take: TakeInfo, holdSeconds: number) => void
 }
 
 function TakeItem({
@@ -379,7 +395,7 @@ function TakeItem({
   onPlayRegion,
   onPlayTake
 }: TakeItemProps): React.JSX.Element {
-  const [loopEnabled, setLoopEnabled] = useState(false)
+  const [holdSeconds, setHoldSeconds] = useState(DEFAULT_HOLD_SECONDS)
   const anyReady = take.regions.some((region, ri) => {
     const key = `${takeIndex}-${ri}-${region.samplePath}`
     return regionStates[key]?.status === 'ready'
@@ -406,27 +422,24 @@ function TakeItem({
       {/* The only play control visible on a folded row - an individual
           region's own play button only shows once its opcode panel is
           unfolded, so the collapsed view always has exactly one play
-          button regardless of take size. The loop toggle sits above it
-          rather than beside it, so the pair still reads as one column at
-          the fixed 48px width the row layout expects. */}
+          button regardless of take size. The hold-duration field sits
+          above it rather than beside it, so the pair still reads as one
+          column at the fixed 48px width the row layout expects. */}
       <div className="sample-take-list__play-take-col">
-        <button
-          type="button"
-          className={
-            'sample-take-list__loop-toggle' +
-            (loopEnabled ? ' sample-take-list__loop-toggle--active' : '')
-          }
-          onClick={() => setLoopEnabled((v) => !v)}
-          aria-pressed={loopEnabled}
-          aria-label="Loop the sustain region for 3 seconds before stopping"
-          title="Loop the sustain region for 3 seconds before stopping"
-        >
-          ↻
-        </button>
+        <input
+          type="number"
+          className="sample-take-list__hold-seconds"
+          value={holdSeconds}
+          min={0}
+          step={0.5}
+          onChange={(e) => setHoldSeconds(Math.max(0, Number(e.target.value) || 0))}
+          aria-label="Seconds to hold this take's note before release"
+          title="Seconds to hold this take's note before release (uses loop_ and ampeg_ opcodes)"
+        />
         <button
           type="button"
           className="sample-take-list__play-take"
-          onClick={() => onPlayTake(takeIndex, take, loopEnabled)}
+          onClick={() => onPlayTake(takeIndex, take, holdSeconds)}
           disabled={!anyReady}
           title="Play this take"
           aria-label="Play take"
@@ -533,10 +546,8 @@ function OpcodeRow({ op }: { op: OpcodeEntry }): React.JSX.Element {
   )
 }
 
-// How long a looped take preview runs before being cut off - long enough to
-// actually hear the sustain loop repeat a few times, short enough not to
-// drone on when the loop point is short.
-const LOOP_PREVIEW_SECONDS = 3
+// Default hold duration for the take-level play button, editable per take.
+const DEFAULT_HOLD_SECONDS = 3
 
 // High enough that even a several-second sample doesn't look blocky at the
 // waveform box's rendered width - SVG scales crisply, so the only real

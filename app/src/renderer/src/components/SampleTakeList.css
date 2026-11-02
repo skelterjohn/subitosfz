@@ -49,8 +49,8 @@
   border-top: 1px solid #eee;
 }
 
-/* Houses the loop toggle above the take's play button, stacked in the same
-   48px-wide column the play button used to occupy alone. */
+/* Houses the hold-duration field above the take's play button, stacked in
+   the same 48px-wide column the play button used to occupy alone. */
 .sample-take-list__play-take-col {
   flex-shrink: 0;
   width: 48px;
@@ -58,37 +58,31 @@
   flex-direction: column;
 }
 
-.sample-take-list__loop-toggle {
+.sample-take-list__hold-seconds {
   flex-shrink: 0;
+  width: 100%;
   height: 22px;
-  cursor: pointer;
+  box-sizing: border-box;
   border: none;
   border-left: 1px solid #ddd;
   border-bottom: 1px solid #ddd;
   border-radius: 0 4px 0 0;
   background: #f0f0f0;
-  color: #999;
-  font-size: 0.9rem;
-  line-height: 1;
-}
-
-.sample-take-list__loop-toggle:active {
-  background: #e6e6e6;
   color: #555;
+  font-size: 0.75rem;
+  text-align: center;
+  appearance: textfield;
 }
 
-.sample-take-list__loop-toggle--active {
-  background: #ffb300;
-  color: white;
+.sample-take-list__hold-seconds::-webkit-inner-spin-button,
+.sample-take-list__hold-seconds::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
-/* Pressing to turn it off - darker amber rather than the plain grey
-   press-state above, since this press starts from the "on" (amber) state
-   rather than the "off" (grey) one. Needs the combined selector's extra
-   specificity to win over the plain :active rule above. */
-.sample-take-list__loop-toggle--active:active {
-  background: #cc8f00;
-  color: white;
+.sample-take-list__hold-seconds:focus {
+  outline: none;
+  background: #e6e6e6;
 }
 
 /* The regions inside here always fire together on a single note-on (that's
