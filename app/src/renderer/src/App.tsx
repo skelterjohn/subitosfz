@@ -145,20 +145,6 @@ export default function App(): React.JSX.Element {
         gap: '0.75rem'
       }}
     >
-      {/* Native title bar + menu bar now own the window chrome and close
-          button (see createWindow in main/index.ts) - this is just a
-          toolbar for the two actions that also exist as menu items. */}
-      <div className="title-bar">
-        <div className="title-bar__actions">
-          <button type="button" className="title-bar__open" onClick={openSfzFile}>
-            open
-          </button>
-          <button type="button" className="title-bar__import" onClick={() => setImportOpen(true)}>
-            import sf2/sf3
-          </button>
-        </div>
-      </div>
-
       {sfzFilePath && (
         <div className="open-row">
           <span className="title-bar__sfz-path">{sfzFilePath}</span>
