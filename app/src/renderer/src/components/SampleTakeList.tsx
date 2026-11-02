@@ -7,12 +7,121 @@ interface Props {
   sfzFilePath: string | null
 }
 
+interface FlatRegion {
+  key: string
+  region: RegionInfo
+}
+
+function flattenRegions(cell: CellRecord): FlatRegion[] {
+  const out: FlatRegion[] = []
+  cell.samples.forEach((take, ti) => {
+    take.regions.forEach((region, ri) => {
+      out.push({ key: `${ti}-${ri}-${region.samplePath}`, region })
+    })
+  })
+  return out
+}
+
+type RegionState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; peaks: Peak[] }
+
+// The sample files are routinely mono, with the actual stereo placement
+// coming entirely from the SFZ pan opcode (-100..100) at playback time - a
+// plain <audio>/Blob-URL player has no idea that opcode exists, so it plays
+// everything dead center. Playback goes through a real Web Audio graph with
+// a pan node driven by that region's own opcode.
+function regionPan(region: RegionInfo): number {
+  const panOpcode = region.opcodes.find((op) => op.name === 'pan')?.value
+  const panValue = panOpcode !== undefined ? Number(panOpcode) : 0
+  return Number.isFinite(panValue) ? Math.max(-1, Math.min(1, panValue / 100)) : 0
+}
+
 // Replaces what used to be a single trust-me "takes: N" number in the
 // criteria panel with the actual files behind it - one box per take, each
 // independently loaded, drawn, and playable, so the count is something you
 // can see rather than just believe. A take with multiple regions (e.g. a
 // stereo pair) shows all of them, not just one picked arbitrarily.
+//
+// Decoding happens once here (not per-row) so "play all" can fire every
+// region's already-decoded buffer at the same scheduled start time, instead
+// of re-fetching/re-decoding on click.
 export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.Element {
+  const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const buffersRef = useRef<Map<string, AudioBuffer>>(new Map())
+
+  useEffect(() => {
+    buffersRef.current = new Map()
+    setRegionStates({})
+    if (!cell || !sfzFilePath) return
+
+    const ctx = new AudioContext()
+    audioCtxRef.current = ctx
+    const regions = flattenRegions(cell)
+    setRegionStates(Object.fromEntries(regions.map((r) => [r.key, { status: 'loading' }])))
+
+    let cancelled = false
+    regions.forEach(({ key, region }) => {
+      ;(async () => {
+        try {
+          const bytes = await window.api.readAudioFile(sfzFilePath, region.samplePath)
+          // Copy into a right-sized standalone buffer - decodeAudioData
+          // wants an ArrayBuffer, and the IPC-returned view may sit on a
+          // differently sized backing buffer.
+          const arrayBuffer = bytes.slice().buffer as ArrayBuffer
+          const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+          if (cancelled) return
+          buffersRef.current.set(key, audioBuffer)
+          setRegionStates((prev) => ({
+            ...prev,
+            [key]: { status: 'ready', peaks: computePeaks(audioBuffer, PEAK_BARS) }
+          }))
+        } catch {
+          if (!cancelled) setRegionStates((prev) => ({ ...prev, [key]: { status: 'error' } }))
+        }
+      })()
+    })
+
+    return () => {
+      cancelled = true
+      ctx.close()
+      audioCtxRef.current = null
+    }
+  }, [cell, sfzFilePath])
+
+  function playRegion(key: string, region: RegionInfo): void {
+    const ctx = audioCtxRef.current
+    const buffer = buffersRef.current.get(key)
+    if (!ctx || !buffer) return
+    ctx.resume()
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    const panner = ctx.createStereoPanner()
+    panner.pan.value = regionPan(region)
+    source.connect(panner).connect(ctx.destination)
+    source.start()
+  }
+
+  // Scheduled at the same future instant for every region rather than
+  // started back-to-back in a loop, so node-creation overhead doesn't
+  // stagger the actual playback - this is the whole point of the button:
+  // judging whether regions genuinely belong together by ear.
+  function playAll(): void {
+    const ctx = audioCtxRef.current
+    if (!ctx || !cell) return
+    ctx.resume()
+    const startAt = ctx.currentTime + 0.05
+    for (const { key, region } of flattenRegions(cell)) {
+      const buffer = buffersRef.current.get(key)
+      if (!buffer) continue
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      const panner = ctx.createStereoPanner()
+      panner.pan.value = regionPan(region)
+      source.connect(panner).connect(ctx.destination)
+      source.start(startAt)
+    }
+  }
+
   if (!cell || cell.samples.length === 0) {
     return (
       <div className="sample-take-list">
@@ -21,100 +130,71 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
     )
   }
 
+  const anyReady = Object.values(regionStates).some((s) => s.status === 'ready')
+
   return (
     <div className="sample-take-list">
-      {cell.samples.map((take, i) => (
-        <TakeItem key={`${take.regions[0]?.samplePath}-${i}`} take={take} sfzFilePath={sfzFilePath} />
-      ))}
+      <div className="sample-take-list__scroll">
+        {cell.samples.map((take, i) => (
+          <TakeItem
+            key={`${take.regions[0]?.samplePath}-${i}`}
+            takeIndex={i}
+            take={take}
+            regionStates={regionStates}
+            onPlay={playRegion}
+          />
+        ))}
+      </div>
+      <button
+        type="button"
+        className="sample-take-list__play-all"
+        onClick={playAll}
+        disabled={!anyReady}
+      >
+        ▶ play all
+      </button>
     </div>
   )
 }
 
 interface TakeItemProps {
+  takeIndex: number
   take: TakeInfo
-  sfzFilePath: string | null
+  regionStates: Record<string, RegionState>
+  onPlay: (key: string, region: RegionInfo) => void
 }
 
-function TakeItem({ take, sfzFilePath }: TakeItemProps): React.JSX.Element {
+function TakeItem({ takeIndex, take, regionStates, onPlay }: TakeItemProps): React.JSX.Element {
   return (
     <div className="sample-take-list__item">
-      {take.regions.map((region, i) => (
-        <RegionRow key={`${region.samplePath}-${i}`} sfzFilePath={sfzFilePath} region={region} />
-      ))}
+      {take.regions.map((region, i) => {
+        // Must match flattenRegions' key format exactly - this is how a
+        // row finds its own decoded buffer/peaks in the shared state above.
+        const key = `${takeIndex}-${i}-${region.samplePath}`
+        return (
+          <RegionRow
+            key={key}
+            region={region}
+            state={regionStates[key]}
+            onPlay={() => onPlay(key, region)}
+          />
+        )
+      })}
     </div>
   )
 }
 
 interface RegionRowProps {
-  sfzFilePath: string | null
   region: RegionInfo
+  state: RegionState | undefined
+  onPlay: () => void
 }
 
-// The sample files are routinely mono, with the actual stereo placement
-// coming entirely from the SFZ pan opcode (-100..100) at playback time - a
-// plain <audio>/Blob-URL player has no idea that opcode exists, so it plays
-// everything dead center. Playback here goes through a real Web Audio graph
-// (the same decoded buffer used for the waveform) so pan is actually heard.
-function RegionRow({ sfzFilePath, region }: RegionRowProps): React.JSX.Element {
-  const [peaks, setPeaks] = useState<Peak[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+function RegionRow({ region, state, onPlay }: RegionRowProps): React.JSX.Element {
   const [opcodesOpen, setOpcodesOpen] = useState(false)
   const samplePath = region.samplePath
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const audioBufferRef = useRef<AudioBuffer | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    setPeaks(null)
-    setError(null)
-    audioBufferRef.current = null
-    if (!sfzFilePath) return
-
-    const ctx = new AudioContext()
-    audioCtxRef.current = ctx
-
-    async function load(): Promise<void> {
-      try {
-        const bytes = await window.api.readAudioFile(sfzFilePath as string, samplePath)
-        // Copy into a right-sized standalone buffer - decodeAudioData wants
-        // an ArrayBuffer, and the IPC-returned view may sit on a differently
-        // sized backing buffer.
-        const arrayBuffer = bytes.slice().buffer as ArrayBuffer
-        const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
-        if (cancelled) return
-        audioBufferRef.current = audioBuffer
-        setPeaks(computePeaks(audioBuffer, PEAK_BARS))
-      } catch (err) {
-        if (!cancelled) setError(String(err))
-      }
-    }
-    load()
-
-    return () => {
-      cancelled = true
-      ctx.close()
-      audioCtxRef.current = null
-    }
-  }, [sfzFilePath, samplePath])
-
-  const panOpcode = region.opcodes.find((op) => op.name === 'pan')?.value
-  const panValue = panOpcode !== undefined ? Number(panOpcode) : 0
-  const pan = Number.isFinite(panValue) ? Math.max(-1, Math.min(1, panValue / 100)) : 0
-
-  function handlePlay(): void {
-    const ctx = audioCtxRef.current
-    const buffer = audioBufferRef.current
-    if (!ctx || !buffer) return
-    ctx.resume()
-    const source = ctx.createBufferSource()
-    source.buffer = buffer
-    const panner = ctx.createStereoPanner()
-    panner.pan.value = pan
-    source.connect(panner).connect(ctx.destination)
-    source.start()
-  }
-
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
+  const isReady = state?.status === 'ready'
 
   return (
     <div className="sample-take-list__region">
@@ -122,8 +202,8 @@ function RegionRow({ sfzFilePath, region }: RegionRowProps): React.JSX.Element {
         <button
           type="button"
           className="sample-take-list__play"
-          onClick={handlePlay}
-          disabled={!peaks}
+          onClick={onPlay}
+          disabled={!isReady}
         >
           ▶
         </button>
@@ -131,9 +211,13 @@ function RegionRow({ sfzFilePath, region }: RegionRowProps): React.JSX.Element {
           {fileName}
         </span>
         <div className="sample-take-list__waveform">
-          {error && <span className="sample-take-list__status">failed to load</span>}
-          {!error && !peaks && <span className="sample-take-list__status">loading…</span>}
-          {!error && peaks && <Waveform peaks={peaks} />}
+          {state?.status === 'error' && (
+            <span className="sample-take-list__status">failed to load</span>
+          )}
+          {(!state || state.status === 'loading') && (
+            <span className="sample-take-list__status">loading…</span>
+          )}
+          {state?.status === 'ready' && <Waveform peaks={state.peaks} />}
         </div>
         <button
           type="button"
