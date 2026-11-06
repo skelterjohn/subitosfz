@@ -66,6 +66,35 @@
   top: 0;
   left: 0;
   z-index: 3;
+  /* Enough room for both diagonal labels to sit clearly apart rather than
+     crowding into a near-square box - this is a grid item, so a min size
+     here also grows the shared row/column track it sits in (row 1's height,
+     column 1's width), same as row/col header content already does. */
+  min-width: 100px;
+  min-height: 2.4rem;
+}
+
+/* Which axis is which, diagonally - row type low/left (above the row
+   headers it labels, which run down the left edge), column type high/right
+   (above the column headers it labels, which run along the top) - sticky
+   already establishes a positioning context for these, same as
+   relative/absolute/fixed would. */
+.instrument-grid__corner-label {
+  position: absolute;
+  font-size: 0.65rem;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.instrument-grid__corner-label--row {
+  left: 0.5rem;
+  bottom: 0.25rem;
+}
+
+.instrument-grid__corner-label--col {
+  right: 0.5rem;
+  top: 0.25rem;
 }
 
 .instrument-grid__col-header {
@@ -74,6 +103,7 @@
   z-index: 2;
   cursor: pointer;
   justify-content: center;
+  white-space: nowrap;
 }
 
 .instrument-grid__row-header {

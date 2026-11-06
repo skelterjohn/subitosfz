@@ -274,12 +274,17 @@ export default function InstrumentGrid({
         <div
           className="instrument-grid__spangrid"
           style={{
-            gridTemplateColumns: `max-content repeat(${displayCols.length}, 44px)`,
+            gridTemplateColumns: `max-content repeat(${displayCols.length}, minmax(44px, max-content))`,
             gridTemplateRows: `auto repeat(${displayRows.length}, 28px)`
           }}
         >
           <div className="instrument-grid__corner" style={{ gridColumn: 1, gridRow: 1 }}>
-            {AXIS_LABEL[layout.rows]}
+            <span className="instrument-grid__corner-label instrument-grid__corner-label--row">
+              {AXIS_LABEL[layout.rows]}
+            </span>
+            <span className="instrument-grid__corner-label instrument-grid__corner-label--col">
+              {AXIS_LABEL[layout.cols]}
+            </span>
           </div>
 
           {displayCols.map((col, i) => (
