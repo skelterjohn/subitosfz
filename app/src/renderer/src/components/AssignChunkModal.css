@@ -1,0 +1,21 @@
+.assign-modal__play {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  background: #4a7fd9;
+  color: white;
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.assign-modal__play:hover:not(:disabled) {
+  background: #3a6bc0;
+}
+
+.assign-modal__play:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

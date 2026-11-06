@@ -157,7 +157,7 @@ fn optional_opcode_lines(gens: &GenMap) -> Vec<(&'static str, String)> {
     lines
 }
 
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .trim()
         .chars()

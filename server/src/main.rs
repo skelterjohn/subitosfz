@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
+mod chunk;
 mod sf2;
 mod sfz_parse;
+mod sfz_write;
 
 #[derive(Serialize)]
 struct Health {
@@ -82,6 +84,62 @@ async fn sfz_parse_handler(
         .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }
 
+#[derive(Deserialize)]
+struct ChunkRequest {
+    #[serde(rename = "sfzPath")]
+    sfz_path: String,
+    #[serde(rename = "sourcePath")]
+    source_path: String,
+    #[serde(rename = "baseName")]
+    base_name: String,
+}
+
+#[derive(Serialize)]
+struct ChunkResponse {
+    chunks: Vec<chunk::ChunkSummary>,
+}
+
+async fn chunk_handler(
+    Json(req): Json<ChunkRequest>,
+) -> Result<Json<ChunkResponse>, (StatusCode, Json<ErrorResponse>)> {
+    chunk::chunk_wav(
+        &PathBuf::from(req.sfz_path),
+        &PathBuf::from(req.source_path),
+        &req.base_name
+    )
+    .map(|chunks| Json(ChunkResponse { chunks }))
+    .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
+struct AddRegionRequest {
+    #[serde(rename = "sfzPath")]
+    sfz_path: String,
+    #[serde(rename = "samplePath")]
+    sample_path: String,
+    note: u8,
+    #[serde(rename = "articulationId")]
+    articulation_id: String,
+    #[serde(rename = "articulationLabel")]
+    articulation_label: Option<String>,
+    velocity: u8,
+}
+
+async fn add_region_handler(
+    Json(req): Json<AddRegionRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::append_region(
+        &PathBuf::from(req.sfz_path),
+        &req.sample_path,
+        req.note,
+        &req.articulation_id,
+        req.articulation_label.as_deref(),
+        req.velocity
+    )
+    .map(Json)
+    .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -89,6 +147,8 @@ async fn main() {
         .route("/sf2/presets", post(sf2_presets))
         .route("/sf2/export", post(sf2_export))
         .route("/sfz/parse", post(sfz_parse_handler))
+        .route("/audio/chunk", post(chunk_handler))
+        .route("/sfz/add-region", post(add_region_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

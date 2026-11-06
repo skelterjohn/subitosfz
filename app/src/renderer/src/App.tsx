@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import InstrumentGrid from './components/InstrumentGrid'
 import ImportSf2Modal from './components/ImportSf2Modal'
+import ImportRecordingModal from './components/ImportRecordingModal'
+import AssignChunkModal from './components/AssignChunkModal'
+import ChunkDrawer from './components/ChunkDrawer'
 import SampleEditorPanel from './components/SampleEditorPanel'
 import SampleTakeList from './components/SampleTakeList'
 import {
@@ -10,6 +13,7 @@ import {
   type Instrument,
   type ParsedSfzResponse
 } from './model/instrument'
+import { unassignedChunks, type DrawerChunk } from './model/drawer'
 
 interface HealthResponse {
   status: string
@@ -25,6 +29,13 @@ export default function App(): React.JSX.Element {
   const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
   const [selectedCell, setSelectedCell] = useState<CellRecord | null>(null)
+  const [importRecordingOpen, setImportRecordingOpen] = useState(false)
+  const [assigningChunk, setAssigningChunk] = useState<DrawerChunk | null>(null)
+  const [drawerChunks, setDrawerChunks] = useState<DrawerChunk[]>([])
+  // Bumped after a chunk-import that doesn't touch the .sfz at all, so the
+  // drawer rescan effect below has a reason to re-run even though neither
+  // `instrument` nor `sfzFilePath` changed.
+  const [drawerRefreshNonce, setDrawerRefreshNonce] = useState(0)
   // Forces InstrumentGrid to remount only once a freshly-parsed instrument
   // is actually ready, rather than keying off sfzFilePath directly - that
   // would remount (and lazily re-init the grid's cell state) the moment the
@@ -95,6 +106,7 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     if (!window.api) return
     const offImport = window.api.onMenuImport(() => setImportOpen(true))
+    const offImportRecording = window.api.onMenuImportRecording(() => setImportRecordingOpen(true))
     const offOpen = window.api.onMenuOpen(() => {
       openSfzFile()
     })
@@ -106,11 +118,31 @@ export default function App(): React.JSX.Element {
     })
     return () => {
       offImport()
+      offImportRecording()
       offOpen()
       offSave()
       offSaveAs()
     }
   }, [])
+
+  // The drawer is a pure filesystem diff (unassigned .wav files in the
+  // project directory) - recomputed whenever the instrument changes (a
+  // region got added, or a different file was opened) or when a chunk
+  // import wrote new files without touching the .sfz at all (the
+  // drawerRefreshNonce bump is the only signal for that case).
+  useEffect(() => {
+    if (!window.api || !sfzFilePath) {
+      setDrawerChunks([])
+      return
+    }
+    let cancelled = false
+    window.api.listDirectory(sfzFilePath).then((names) => {
+      if (!cancelled) setDrawerChunks(unassignedChunks(instrument, names))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [instrument, sfzFilePath, drawerRefreshNonce])
 
   useEffect(() => {
     if (!window.api) return
@@ -155,6 +187,22 @@ export default function App(): React.JSX.Element {
       )}
 
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
+      {importRecordingOpen && (
+        <ImportRecordingModal
+          sfzFilePath={sfzFilePath}
+          onClose={() => setImportRecordingOpen(false)}
+          onImported={() => setDrawerRefreshNonce((n) => n + 1)}
+        />
+      )}
+      {assigningChunk && sfzFilePath && (
+        <AssignChunkModal
+          chunk={assigningChunk}
+          sfzFilePath={sfzFilePath}
+          existingArticulations={instrument.articulationAxis}
+          onClose={() => setAssigningChunk(null)}
+          onAssigned={() => loadSfzFile(sfzFilePath)}
+        />
+      )}
 
       <div style={{ display: 'flex', gap: '0.75rem', flex: 1, minHeight: 0 }}>
         <InstrumentGrid
@@ -169,7 +217,8 @@ export default function App(): React.JSX.Element {
             minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
-            gap: '0.75rem'
+            gap: '0.75rem',
+            position: 'relative'
           }}
         >
           {/* Matches InstrumentGrid's own toolbar row in height (same class,
@@ -183,6 +232,11 @@ export default function App(): React.JSX.Element {
             <SampleEditorPanel cell={selectedCell} />
             <SampleTakeList cell={selectedCell} sfzFilePath={sfzFilePath} />
           </div>
+          {/* Absolutely positioned against this column (position: relative
+              above) - closed, it sits off its right edge; opened, it slides
+              in and occludes the sample panel rather than sharing space with
+              it as a permanent third column. */}
+          <ChunkDrawer chunks={drawerChunks} sfzFilePath={sfzFilePath} onAssign={setAssigningChunk} />
         </div>
       </div>
 

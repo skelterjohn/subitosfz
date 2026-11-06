@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import windowStateKeeper from 'electron-window-state'
 
 // performance.timeOrigin is the epoch time the Node/Electron process itself
@@ -18,6 +18,7 @@ interface ImportDirs {
   lastSf2Dir?: string
   lastDestDir?: string
   lastSfzDir?: string
+  lastRecordingDir?: string
 }
 
 function importDirsPath(): string {
@@ -117,6 +118,10 @@ function buildMenu(): Menu {
       {
         label: 'Import SF2/SF3…',
         click: () => mainWindow?.webContents.send('menu-import')
+      },
+      {
+        label: 'Import Recording…',
+        click: () => mainWindow?.webContents.send('menu-import-recording')
       },
       {
         label: 'Open…',
@@ -230,6 +235,27 @@ app.whenReady().then(async () => {
     const fullPath = join(dirname(sfzFilePath), relativeSamplePath)
     const data = await readFile(fullPath)
     return new Uint8Array(data)
+  })
+
+  ipcMain.handle('list-directory', async (_event, sfzFilePath: string) => {
+    const dirPath = dirname(sfzFilePath)
+    const entries = await readdir(dirPath, { withFileTypes: true })
+    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+  })
+
+  ipcMain.handle('choose-audio-file', async () => {
+    if (!mainWindow) return null
+    const dirs = loadImportDirs()
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a recorded take',
+      defaultPath: dirs.lastRecordingDir,
+      properties: ['openFile'],
+      filters: [{ name: 'WAV audio', extensions: ['wav'] }]
+    })
+    if (result.canceled) return null
+    const filePath = result.filePaths[0]
+    saveImportDirs({ ...dirs, lastRecordingDir: dirname(filePath) })
+    return filePath
   })
 
   ipcMain.handle('choose-directory', async () => {

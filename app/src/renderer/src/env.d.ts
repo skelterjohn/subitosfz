@@ -15,7 +15,10 @@ declare global {
       getLastPivot: () => Promise<{ axis: string; value: string } | null>
       setLastPivot: (axis: string, value: string) => Promise<void>
       readAudioFile: (sfzFilePath: string, relativeSamplePath: string) => Promise<Uint8Array>
+      listDirectory: (sfzFilePath: string) => Promise<string[]>
+      chooseAudioFile: () => Promise<string | null>
       onMenuImport: (callback: () => void) => () => void
+      onMenuImportRecording: (callback: () => void) => () => void
       onMenuOpen: (callback: () => void) => () => void
       onMenuSave: (callback: () => void) => () => void
       onMenuSaveAs: (callback: () => void) => () => void

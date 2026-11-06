@@ -24,7 +24,12 @@ const api = {
     ipcRenderer.invoke('set-last-pivot', axis, value),
   readAudioFile: (sfzFilePath: string, relativeSamplePath: string): Promise<Uint8Array> =>
     ipcRenderer.invoke('read-audio-file', sfzFilePath, relativeSamplePath),
+  listDirectory: (sfzFilePath: string): Promise<string[]> =>
+    ipcRenderer.invoke('list-directory', sfzFilePath),
+  chooseAudioFile: (): Promise<string | null> => ipcRenderer.invoke('choose-audio-file'),
   onMenuImport: (callback: () => void): (() => void) => onMenuEvent('menu-import', callback),
+  onMenuImportRecording: (callback: () => void): (() => void) =>
+    onMenuEvent('menu-import-recording', callback),
   onMenuOpen: (callback: () => void): (() => void) => onMenuEvent('menu-open', callback),
   onMenuSave: (callback: () => void): (() => void) => onMenuEvent('menu-save', callback),
   onMenuSaveAs: (callback: () => void): (() => void) => onMenuEvent('menu-save-as', callback)
