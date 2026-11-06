@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, unlink } from 'node:fs/promises'
 import windowStateKeeper from 'electron-window-state'
 
 // performance.timeOrigin is the epoch time the Node/Electron process itself
@@ -256,6 +256,11 @@ app.whenReady().then(async () => {
     const filePath = result.filePaths[0]
     saveImportDirs({ ...dirs, lastRecordingDir: dirname(filePath) })
     return filePath
+  })
+
+  ipcMain.handle('delete-sample-file', async (_event, sfzFilePath: string, relativeSamplePath: string) => {
+    const fullPath = join(dirname(sfzFilePath), relativeSamplePath)
+    await unlink(fullPath)
   })
 
   ipcMain.handle('choose-directory', async () => {

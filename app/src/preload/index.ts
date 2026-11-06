@@ -26,6 +26,8 @@ const api = {
     ipcRenderer.invoke('read-audio-file', sfzFilePath, relativeSamplePath),
   listDirectory: (sfzFilePath: string): Promise<string[]> =>
     ipcRenderer.invoke('list-directory', sfzFilePath),
+  deleteSampleFile: (sfzFilePath: string, relativeSamplePath: string): Promise<void> =>
+    ipcRenderer.invoke('delete-sample-file', sfzFilePath, relativeSamplePath),
   chooseAudioFile: (): Promise<string | null> => ipcRenderer.invoke('choose-audio-file'),
   onMenuImport: (callback: () => void): (() => void) => onMenuEvent('menu-import', callback),
   onMenuImportRecording: (callback: () => void): (() => void) =>

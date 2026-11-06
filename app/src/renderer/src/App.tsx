@@ -236,7 +236,12 @@ export default function App(): React.JSX.Element {
               above) - closed, it sits off its right edge; opened, it slides
               in and occludes the sample panel rather than sharing space with
               it as a permanent third column. */}
-          <ChunkDrawer chunks={drawerChunks} sfzFilePath={sfzFilePath} onAssign={setAssigningChunk} />
+          <ChunkDrawer
+            chunks={drawerChunks}
+            sfzFilePath={sfzFilePath}
+            onAssign={setAssigningChunk}
+            onDeleted={() => setDrawerRefreshNonce((n) => n + 1)}
+          />
         </div>
       </div>
 
