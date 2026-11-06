@@ -66,7 +66,7 @@ function computeRangeSegments(
 
 function formatRangeLabel(lo: number, hi: number, axis: 'note' | 'velocity'): string {
   if (axis === 'note') {
-    return lo === hi ? midiToName(hi) : `${midiToName(hi)}–${midiToName(lo)}`
+    return lo === hi ? midiToName(hi) : `${midiToName(lo)}–${midiToName(hi)}`
   }
   return lo === hi ? String(lo) : `${lo}-${hi}`
 }
