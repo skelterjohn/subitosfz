@@ -137,6 +137,13 @@ function regionLoopRangeSec(
   return { start: startFrames / nativeSampleRate, end: endFrames / nativeSampleRate }
 }
 
+// What gates whether this region plays at all for a given note/velocity -
+// grouped into their own "region" section in the opcode panel rather than
+// left to sort alphabetically among everything else, in a fixed read order
+// (key range, then velocity range, then articulation) rather than however
+// they happen to appear in the file.
+const REGION_CRITERIA_OPCODES = ['lokey', 'hikey', 'lovel', 'hivel', 'sw_last']
+
 function formatDuration(seconds: number): string {
   return `${seconds.toFixed(2)}s`
 }
@@ -502,8 +509,16 @@ function RegionRow({
   const samplePath = region.samplePath
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
   const isReady = state?.status === 'ready'
-  const globalOpcodes = region.opcodes.filter((op) => op.isGlobal)
-  const localOpcodes = region.opcodes.filter((op) => !op.isGlobal)
+  // Pulled out into their own section regardless of global/local status (in
+  // practice always local - these are what make one region selection-
+  // distinct from another, so they're almost never inherited) rather than
+  // left to sort wherever they happen to fall among the rest.
+  const criteriaOpcodes = REGION_CRITERIA_OPCODES.map((name) =>
+    region.opcodes.find((op) => op.name === name)
+  ).filter((op): op is OpcodeEntry => op !== undefined)
+  const remainingOpcodes = region.opcodes.filter((op) => !REGION_CRITERIA_OPCODES.includes(op.name))
+  const globalOpcodes = remainingOpcodes.filter((op) => op.isGlobal)
+  const localOpcodes = remainingOpcodes.filter((op) => !op.isGlobal)
 
   return (
     <div className="sample-take-list__region">
@@ -554,9 +569,21 @@ function RegionRow({
           >
             ▶
           </button>
-          {/* Globals first (per the backend's own ordering), set off with a
-              vertical rail rather than a divider line - local opcodes below
-              read as the "default" flush-left case. */}
+          {/* This region's own selection criteria first (what note/velocity/
+              articulation it's gated on), then globals (per the backend's
+              own ordering), both set off with a vertical rail rather than a
+              divider line - local opcodes below read as the "default"
+              flush-left case. */}
+          {criteriaOpcodes.length > 0 && (
+            <div className="sample-take-list__opcode-group">
+              <span className="sample-take-list__opcode-rail">region</span>
+              <div className="sample-take-list__opcode-rows">
+                {criteriaOpcodes.map((op) => (
+                  <OpcodeRow key={op.name} op={op} />
+                ))}
+              </div>
+            </div>
+          )}
           {globalOpcodes.length > 0 && (
             <div className="sample-take-list__opcode-group">
               <span className="sample-take-list__opcode-rail">global</span>

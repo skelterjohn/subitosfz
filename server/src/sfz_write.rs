@@ -40,7 +40,13 @@ pub fn append_region(
     text.push('\n');
     text.push_str("<region>\n");
     text.push_str(&format!("sample={normalized_sample_path}\n"));
+    // key= alone is enough (SFZ shorthand for lokey=hikey=pitch_keycenter),
+    // but lokey/hikey are written explicitly too so region_key_range (and
+    // the UI's own "region" opcode section) see them directly rather than
+    // falling back to deriving them from key=.
     text.push_str(&format!("key={note}\n"));
+    text.push_str(&format!("lokey={note}\n"));
+    text.push_str(&format!("hikey={note}\n"));
     text.push_str(&format!("lovel={velocity}\n"));
     text.push_str(&format!("hivel={velocity}\n"));
     text.push_str(&format!("sw_last={articulation_id}\n"));
