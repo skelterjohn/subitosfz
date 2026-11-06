@@ -62,6 +62,13 @@ pub struct RegionInfo {
     // *display* should be limited to those when SFZ has hundreds of
     // possible opcodes (envelopes, filters, pan, tuning, loop points...).
     pub opcodes: Vec<OpcodeEntry>,
+    // This region's position among every <region> header in the file,
+    // counting ones without a sample= too (see where this is threaded
+    // through in `parse`) - stable across repeated parses since nothing
+    // ever reorders or deletes existing regions. Lets the frontend refer to
+    // "this exact region" for in-place opcode edits.
+    #[serde(rename = "regionIndex")]
+    pub index: usize,
 }
 
 #[derive(Serialize)]
@@ -343,8 +350,14 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     // not just the first one found. A stereo pair's two regions share a
     // sound identity (that's what makes them one take), but they're still
     // two distinct real files that both need to stay visible.
-    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), Vec<RawRegion>> = BTreeMap::new();
-    for raw in &raw_regions {
+    // (original_index, region) - original_index is this region's position
+    // among ALL <region> headers in the file, needed below for
+    // RegionInfo.index. Must be assigned here, before the sample=-presence
+    // filter a few lines down, or it would desync from a text-based
+    // region-span finder (in sfz_write.rs) that counts every <region>
+    // header unconditionally.
+    let mut sound_regions: BTreeMap<(CellKey, SoundIdentity), Vec<(usize, RawRegion)>> = BTreeMap::new();
+    for (original_index, raw) in raw_regions.iter().enumerate() {
         let region = &raw.merged;
         let Some(note) = region_note(region) else { continue };
         let articulation_id = region
@@ -372,7 +385,10 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
         }
 
         if region.contains_key("sample") {
-            sound_regions.entry((key, identity)).or_default().push(raw.clone());
+            sound_regions
+                .entry((key, identity))
+                .or_default()
+                .push((original_index, raw.clone()));
         }
     }
 
@@ -387,7 +403,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
                     let group = sound_regions.get(&(key.clone(), identity))?;
                     let regions = group
                         .iter()
-                        .filter_map(|region| {
+                        .filter_map(|(region_index, region)| {
                             let sample_path = region.merged.get("sample")?.clone();
                             // Globals first, then this region's own - both
                             // groups individually in the map's alphabetical
@@ -409,7 +425,7 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
                                     is_global: !region.local_keys.contains(name)
                                 })
                                 .collect();
-                            Some(RegionInfo { sample_path, opcodes })
+                            Some(RegionInfo { sample_path, opcodes, index: *region_index })
                         })
                         .collect::<Vec<_>>();
                     if regions.is_empty() { None } else { Some(TakeInfo { regions }) }

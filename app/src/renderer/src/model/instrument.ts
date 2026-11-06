@@ -46,6 +46,11 @@ export interface RegionInfo {
   // itself uses for sample=).
   samplePath: string
   opcodes: OpcodeEntry[]
+  // This region's position among every <region> in the file - stable
+  // across repeated parses (see sfz_parse.rs), used to target an in-place
+  // opcode edit at exactly this region and to re-find it (and its
+  // containing cell) after a re-parse.
+  regionIndex: number
 }
 
 // One distinct recorded sound (round-robin/random-slot take, or a
@@ -88,6 +93,22 @@ export interface Instrument {
   articulationAxis: AxisValue[]
   velocityAxis: AxisValue[]
   cells: CellRecord[]
+}
+
+// Finds the cell containing a specific region after a re-parse, by its
+// stable regionIndex - lets the app keep a just-edited sample selected and
+// visible even if the edit moved it into a different cell (or the exact
+// same cell, now a freshly-built object the old selectedCell reference
+// would no longer === match).
+export function findCellByRegionIndex(instrument: Instrument, regionIndex: number): CellRecord | null {
+  for (const cell of instrument.cells) {
+    for (const take of cell.samples) {
+      if (take.regions.some((region) => region.regionIndex === regionIndex)) {
+        return cell
+      }
+    }
+  }
+  return null
 }
 
 export function axisValues(instrument: Instrument, axis: Axis): AxisValue[] {

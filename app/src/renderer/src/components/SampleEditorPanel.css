@@ -49,3 +49,100 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.sample-editor__value--editable {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+}
+
+.sample-editor__value--editable:hover {
+  border-bottom-color: #aaa;
+}
+
+.sample-editor__row--editing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.3rem;
+}
+
+.sample-editor__edit {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.sample-editor__edit input[type='number'],
+.sample-editor__edit input[type='text'] {
+  width: 4.5em;
+  font: inherit;
+  font-size: 0.8rem;
+  border: 1px solid #4a7fd9;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+  text-align: right;
+}
+
+.sample-editor__edit--articulation {
+  justify-content: flex-start;
+}
+
+.sample-editor__edit--articulation select {
+  font: inherit;
+  font-size: 0.8rem;
+  border: 1px solid #4a7fd9;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+}
+
+.sample-editor__edit--articulation input[type='text'] {
+  width: 8em;
+  text-align: left;
+}
+
+.sample-editor__range-sep {
+  color: #999;
+}
+
+.sample-editor__preview {
+  font-size: 0.7rem;
+  color: #4a7fd9;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sample-editor__confirm,
+.sample-editor__cancel {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.sample-editor__confirm {
+  background: #2a7d2a;
+  color: white;
+}
+
+.sample-editor__confirm:disabled,
+.sample-editor__cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sample-editor__cancel {
+  background: #f0f0f0;
+  color: #555;
+}
+
+.sample-editor__error {
+  flex-basis: 100%;
+  color: crimson;
+  font-size: 0.65rem;
+  text-align: right;
+}

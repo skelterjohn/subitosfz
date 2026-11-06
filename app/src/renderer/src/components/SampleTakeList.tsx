@@ -5,6 +5,7 @@ import './SampleTakeList.css'
 interface Props {
   cell: CellRecord | null
   sfzFilePath: string | null
+  onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
 }
 
 interface FlatRegion {
@@ -12,11 +13,16 @@ interface FlatRegion {
   region: RegionInfo
 }
 
+// Keyed by regionIndex (stable across re-parses - see model/instrument.ts)
+// rather than a samplePath-based composite: editing a region's own sample=
+// is in scope for this app, and a samplePath-based key would spuriously
+// remount the row (closing whatever opcode panel the user was just editing
+// in) the moment that edit lands.
 function flattenRegions(cell: CellRecord): FlatRegion[] {
   const out: FlatRegion[] = []
-  cell.samples.forEach((take, ti) => {
-    take.regions.forEach((region, ri) => {
-      out.push({ key: `${ti}-${ri}-${region.samplePath}`, region })
+  cell.samples.forEach((take) => {
+    take.regions.forEach((region) => {
+      out.push({ key: String(region.regionIndex), region })
     })
   })
   return out
@@ -173,7 +179,7 @@ function regionPan(region: RegionInfo): number {
 // Decoding happens once here (not per-row) so playing a take can fire every
 // one of its regions' already-decoded buffers at the same scheduled start
 // time, instead of re-fetching/re-decoding on click.
-export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.Element {
+export default function SampleTakeList({ cell, sfzFilePath, onSetOpcode }: Props): React.JSX.Element {
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
   // Seconds into each actively-sounding region's own buffer, not a 0..1
   // fraction - see playbackPositionSec for why.
@@ -317,8 +323,8 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
     if (!ctx) return
     ctx.resume()
     const startAt = ctx.currentTime + 0.05
-    take.regions.forEach((region, ri) => {
-      const key = `${takeIndex}-${ri}-${region.samplePath}`
+    take.regions.forEach((region) => {
+      const key = String(region.regionIndex)
       const buffer = buffersRef.current.get(key)
       if (!buffer) return
       const state = regionStates[key]
@@ -384,13 +390,14 @@ export default function SampleTakeList({ cell, sfzFilePath }: Props): React.JSX.
       <div className="sample-take-list__scroll">
         {cell.samples.map((take, i) => (
           <TakeItem
-            key={`${take.regions[0]?.samplePath}-${i}`}
+            key={take.regions[0]?.regionIndex ?? i}
             takeIndex={i}
             take={take}
             regionStates={regionStates}
             playheads={playheads}
             onPlayRegion={playRegion}
             onPlayTake={playTake}
+            onSetOpcode={onSetOpcode}
           />
         ))}
       </div>
@@ -405,6 +412,7 @@ interface TakeItemProps {
   playheads: Record<string, number>
   onPlayRegion: (key: string, region: RegionInfo) => void
   onPlayTake: (takeIndex: number, take: TakeInfo, holdSeconds: number) => void
+  onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
 }
 
 function TakeItem({
@@ -413,12 +421,12 @@ function TakeItem({
   regionStates,
   playheads,
   onPlayRegion,
-  onPlayTake
+  onPlayTake,
+  onSetOpcode
 }: TakeItemProps): React.JSX.Element {
   const [holdSeconds, setHoldSeconds] = useState(DEFAULT_HOLD_SECONDS)
-  const anyReady = take.regions.some((region, ri) => {
-    const key = `${takeIndex}-${ri}-${region.samplePath}`
-    return regionStates[key]?.status === 'ready'
+  const anyReady = take.regions.some((region) => {
+    return regionStates[String(region.regionIndex)]?.status === 'ready'
   })
   // Regions in a take play simultaneously (same note-on), so their
   // waveforms should share one timeline - the longest region fills the
@@ -427,9 +435,8 @@ function TakeItem({
   // region's row rather than each racing to its own right edge.
   const takeMaxDurationSec = Math.max(
     0,
-    ...take.regions.map((region, ri) => {
-      const key = `${takeIndex}-${ri}-${region.samplePath}`
-      const s = regionStates[key]
+    ...take.regions.map((region) => {
+      const s = regionStates[String(region.regionIndex)]
       return s?.status === 'ready' ? s.durationSec : 0
     })
   )
@@ -437,10 +444,10 @@ function TakeItem({
   return (
     <div className="sample-take-list__item">
       <div className="sample-take-list__regions">
-        {take.regions.map((region, i) => {
+        {take.regions.map((region) => {
           // Must match flattenRegions' key format exactly - this is how a
           // row finds its own decoded buffer/peaks in the shared state above.
-          const key = `${takeIndex}-${i}-${region.samplePath}`
+          const key = String(region.regionIndex)
           return (
             <RegionRow
               key={key}
@@ -449,6 +456,7 @@ function TakeItem({
               takeMaxDurationSec={takeMaxDurationSec}
               playheadPositionSec={playheads[key]}
               onPlay={() => onPlayRegion(key, region)}
+              onSetOpcode={onSetOpcode}
             />
           )
         })}
@@ -496,6 +504,7 @@ interface RegionRowProps {
   takeMaxDurationSec: number
   playheadPositionSec: number | undefined
   onPlay: () => void
+  onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
 }
 
 function RegionRow({
@@ -503,9 +512,14 @@ function RegionRow({
   state,
   takeMaxDurationSec,
   playheadPositionSec,
-  onPlay
+  onPlay,
+  onSetOpcode
 }: RegionRowProps): React.JSX.Element {
   const [opcodesOpen, setOpcodesOpen] = useState(false)
+  // Bound to this region, so OpcodeRow/the add-opcode control below only
+  // ever need to know a bare (name, value) pair.
+  const setOpcode = (name: string, value: string): Promise<void> =>
+    onSetOpcode(region.regionIndex, name, value)
   const samplePath = region.samplePath
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
   const isReady = state?.status === 'ready'
@@ -569,27 +583,27 @@ function RegionRow({
           >
             ▶
           </button>
-          {/* This region's own selection criteria first (what note/velocity/
-              articulation it's gated on), then globals (per the backend's
-              own ordering), both set off with a vertical rail rather than a
-              divider line - local opcodes below read as the "default"
-              flush-left case. */}
-          {criteriaOpcodes.length > 0 && (
-            <div className="sample-take-list__opcode-group">
-              <span className="sample-take-list__opcode-rail">region</span>
-              <div className="sample-take-list__opcode-rows">
-                {criteriaOpcodes.map((op) => (
-                  <OpcodeRow key={op.name} op={op} />
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Globals first (per the backend's own ordering), then this
+              region's own cell-defining criteria (what note/velocity/
+              articulation it's gated on), both set off with a vertical rail
+              rather than a divider line - local opcodes below read as the
+              "default" flush-left case. */}
           {globalOpcodes.length > 0 && (
             <div className="sample-take-list__opcode-group">
               <span className="sample-take-list__opcode-rail">global</span>
               <div className="sample-take-list__opcode-rows">
                 {globalOpcodes.map((op) => (
-                  <OpcodeRow key={op.name} op={op} />
+                  <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
+                ))}
+              </div>
+            </div>
+          )}
+          {criteriaOpcodes.length > 0 && (
+            <div className="sample-take-list__opcode-group">
+              <span className="sample-take-list__opcode-rail">cell</span>
+              <div className="sample-take-list__opcode-rows">
+                {criteriaOpcodes.map((op) => (
+                  <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
                 ))}
               </div>
             </div>
@@ -597,21 +611,198 @@ function RegionRow({
           {localOpcodes.length > 0 && (
             <div className="sample-take-list__opcode-rows">
               {localOpcodes.map((op) => (
-                <OpcodeRow key={op.name} op={op} />
+                <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
               ))}
             </div>
           )}
+          <AddOpcodeControl onSetOpcode={setOpcode} />
         </div>
       )}
     </div>
   )
 }
 
-function OpcodeRow({ op }: { op: OpcodeEntry }): React.JSX.Element {
+interface OpcodeRowProps {
+  op: OpcodeEntry
+  onSetOpcode: (name: string, value: string) => Promise<void>
+}
+
+// Click the value to edit it in place - standard inline-edit pattern (click
+// -> input, Enter/blur commits, Escape cancels), new to this app. Editing
+// and adding an opcode are the same backend call (see App.tsx/sfz_write.rs
+// - a region's own opcode always wins over an inherited one regardless of
+// file position), so clicking an inherited ("global") value's text and
+// typing a new one correctly creates a local override, with no special
+// case needed here.
+function OpcodeRow({ op, onSetOpcode }: OpcodeRowProps): React.JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const [draftValue, setDraftValue] = useState(op.value)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // Set by Escape just before it blurs the input, so the blur handler's
+  // commit is skipped instead of re-saving the value Escape just reverted.
+  const cancelingRef = useRef(false)
+
+  function startEditing(): void {
+    setDraftValue(op.value)
+    setError(null)
+    setEditing(true)
+  }
+
+  function cancel(): void {
+    cancelingRef.current = true
+    setDraftValue(op.value)
+    setEditing(false)
+  }
+
+  async function commit(): Promise<void> {
+    if (cancelingRef.current) {
+      cancelingRef.current = false
+      return
+    }
+    if (draftValue === op.value) {
+      setEditing(false)
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      await onSetOpcode(op.name, draftValue)
+      setEditing(false)
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="sample-take-list__opcode">
       <span className="sample-take-list__opcode-name">{op.name}</span>
-      <span className="sample-take-list__opcode-value">{op.value}</span>
+      {editing ? (
+        <input
+          type="text"
+          className="sample-take-list__opcode-input"
+          value={draftValue}
+          disabled={saving}
+          autoFocus
+          onChange={(e) => setDraftValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.currentTarget.blur()
+            } else if (e.key === 'Escape') {
+              cancel()
+              e.currentTarget.blur()
+            }
+          }}
+        />
+      ) : (
+        <span
+          className="sample-take-list__opcode-value sample-take-list__opcode-value--editable"
+          onClick={startEditing}
+          title="Click to edit"
+        >
+          {op.value}
+        </span>
+      )}
+      {error && <span className="sample-take-list__opcode-error">{error}</span>}
+    </div>
+  )
+}
+
+// One control for the whole opcode panel (not per-section) - clicking it
+// reveals a name+value form, submitting via the same onSetOpcode path as
+// editing an existing value.
+function AddOpcodeControl({
+  onSetOpcode
+}: {
+  onSetOpcode: (name: string, value: string) => Promise<void>
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function close(): void {
+    setOpen(false)
+    setName('')
+    setValue('')
+    setError(null)
+  }
+
+  async function submit(): Promise<void> {
+    const trimmedName = name.trim()
+    if (!trimmedName || !value) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onSetOpcode(trimmedName, value)
+      close()
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="sample-take-list__add-opcode-toggle"
+        onClick={() => setOpen(true)}
+        aria-label="Add a new opcode"
+        title="Add a new opcode"
+      >
+        +
+      </button>
+    )
+  }
+
+  return (
+    <div className="sample-take-list__add-opcode-form">
+      <div className="sample-take-list__add-opcode-row">
+        <input
+          type="text"
+          placeholder="opcode"
+          value={name}
+          disabled={saving}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+        />
+        <input
+          type="text"
+          placeholder="value"
+          value={value}
+          disabled={saving}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+            if (e.key === 'Escape') close()
+          }}
+        />
+        <button
+          type="button"
+          className="sample-take-list__add-opcode-confirm"
+          onClick={submit}
+          disabled={saving || !name.trim() || !value}
+          aria-label="Save new opcode"
+        >
+          ✓
+        </button>
+        <button
+          type="button"
+          className="sample-take-list__add-opcode-cancel"
+          onClick={close}
+          disabled={saving}
+          aria-label="Cancel"
+        >
+          ×
+        </button>
+      </div>
+      {error && <span className="sample-take-list__opcode-error">{error}</span>}
     </div>
   )
 }

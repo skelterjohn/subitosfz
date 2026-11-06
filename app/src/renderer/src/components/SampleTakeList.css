@@ -219,6 +219,104 @@
   text-overflow: ellipsis;
 }
 
+.sample-take-list__opcode-value--editable {
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+}
+
+.sample-take-list__opcode-value--editable:hover {
+  border-bottom-color: #aaa;
+}
+
+.sample-take-list__opcode-input {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font: inherit;
+  font-family: monospace;
+  font-size: 0.75rem;
+  border: 1px solid #4a7fd9;
+  border-radius: 3px;
+  padding: 0 2px;
+  background: #fff;
+}
+
+.sample-take-list__opcode-error {
+  flex-basis: 100%;
+  color: crimson;
+  font-size: 0.65rem;
+  text-align: right;
+}
+
+/* Sits at the very bottom of the whole opcodes panel (not per-section) -
+   one place to add a brand-new opcode to this region. */
+.sample-take-list__add-opcode-toggle {
+  align-self: flex-start;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  background: #f0f0f0;
+  color: #555;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+.sample-take-list__add-opcode-toggle:hover {
+  background: #e6e6e6;
+}
+
+.sample-take-list__add-opcode-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sample-take-list__add-opcode-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sample-take-list__add-opcode-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: monospace;
+  font-size: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 0.1rem 0.3rem;
+}
+
+.sample-take-list__add-opcode-confirm,
+.sample-take-list__add-opcode-cancel {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.sample-take-list__add-opcode-confirm {
+  background: #2a7d2a;
+  color: white;
+}
+
+.sample-take-list__add-opcode-confirm:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sample-take-list__add-opcode-cancel {
+  background: #f0f0f0;
+  color: #555;
+}
+
 .sample-take-list__play {
   flex-shrink: 0;
   cursor: pointer;

@@ -8,6 +8,7 @@ import SampleEditorPanel from './components/SampleEditorPanel'
 import SampleTakeList from './components/SampleTakeList'
 import {
   emptyInstrument,
+  findCellByRegionIndex,
   instrumentFromParsedSfz,
   type CellRecord,
   type Instrument,
@@ -19,6 +20,26 @@ interface HealthResponse {
   status: string
   version: string
 }
+
+// Opcodes that can change which cell/take a region belongs to (the cell
+// key, sound_identity, or note-derivation fields in sfz_parse.rs) - editing
+// any of these needs a full InstrumentGrid remount since the overall axis
+// ranges themselves could shift, not just this one cell. Everything else
+// (pan, tune, envelope...) updates `instrument` in place instead, avoiding
+// a pivot-view flicker on every single-value edit.
+const CELL_AFFECTING_OPCODES = new Set([
+  'lokey',
+  'hikey',
+  'lovel',
+  'hivel',
+  'key',
+  'pitch_keycenter',
+  'sw_last',
+  'seq_position',
+  'lorand',
+  'hirand',
+  'trigger'
+])
 
 export default function App(): React.JSX.Element {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -69,6 +90,65 @@ export default function App(): React.JSX.Element {
       window.api.setLastSfzFile(path)
     } catch (err) {
       setSfzLoadError(String(err))
+    }
+  }
+
+  // Edits and adds are the same backend operation - see sfz_write.rs. On
+  // success, re-finds and re-selects whichever cell now contains the
+  // edited region (by its stable regionIndex), so the sample being worked
+  // on stays visible even if the edit moved it to a different cell.
+  // Rethrows on failure so the calling row can show its own inline error.
+  async function setRegionOpcode(regionIndex: number, name: string, value: string): Promise<void> {
+    if (!sfzFilePath) throw new Error('no instrument is open')
+    const port = await window.api.getServerPort()
+    const res = await fetch(`http://127.0.0.1:${port}/sfz/set-opcode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sfzPath: sfzFilePath, regionIndex, name, value })
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.error ?? `request failed (${res.status})`)
+    }
+    const parsed = (await res.json()) as ParsedSfzResponse
+    const next = instrumentFromParsedSfz(parsed)
+    setInstrument(next)
+    setSelectedCell(findCellByRegionIndex(next, regionIndex))
+    if (CELL_AFFECTING_OPCODES.has(name)) {
+      setLoadGeneration((g) => g + 1)
+    }
+  }
+
+  // Same shape as setRegionOpcode, but fans the same set of opcodes out to
+  // every region in `regionIndices` in one backend call - used for editing
+  // a cell's own criteria (pitch, pitch range, volume, articulation) from
+  // SampleEditorPanel, where "the cell" really means every region across
+  // every take that currently shares those criteria, and an edit should
+  // move all of them together rather than splitting the group apart.
+  // Reselects by the FIRST region index, since a successful batch edit
+  // puts all of them back in the same cell together.
+  async function setCellOpcodes(
+    regionIndices: number[],
+    opcodes: Array<{ name: string; value: string }>
+  ): Promise<void> {
+    if (!sfzFilePath) throw new Error('no instrument is open')
+    if (regionIndices.length === 0) return
+    const port = await window.api.getServerPort()
+    const res = await fetch(`http://127.0.0.1:${port}/sfz/set-cell-opcodes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sfzPath: sfzFilePath, regionIndices, opcodes })
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.error ?? `request failed (${res.status})`)
+    }
+    const parsed = (await res.json()) as ParsedSfzResponse
+    const next = instrumentFromParsedSfz(parsed)
+    setInstrument(next)
+    setSelectedCell(findCellByRegionIndex(next, regionIndices[0]))
+    if (opcodes.some((op) => CELL_AFFECTING_OPCODES.has(op.name))) {
+      setLoadGeneration((g) => g + 1)
     }
   }
 
@@ -229,8 +309,16 @@ export default function App(): React.JSX.Element {
             <span className="instrument-grid__pivot-label">placeholder</span>
           </div>
           <div className="sample-panel">
-            <SampleEditorPanel cell={selectedCell} />
-            <SampleTakeList cell={selectedCell} sfzFilePath={sfzFilePath} />
+            <SampleEditorPanel
+              cell={selectedCell}
+              existingArticulations={instrument.articulationAxis}
+              onSetCellOpcodes={setCellOpcodes}
+            />
+            <SampleTakeList
+              cell={selectedCell}
+              sfzFilePath={sfzFilePath}
+              onSetOpcode={setRegionOpcode}
+            />
           </div>
           {/* Absolutely positioned against this column (position: relative
               above) - closed, it sits off its right edge; opened, it slides

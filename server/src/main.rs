@@ -140,6 +140,48 @@ async fn add_region_handler(
     .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }
 
+#[derive(Deserialize)]
+struct SetOpcodeRequest {
+    #[serde(rename = "sfzPath")]
+    sfz_path: String,
+    #[serde(rename = "regionIndex")]
+    region_index: usize,
+    name: String,
+    value: String,
+}
+
+async fn set_opcode_handler(
+    Json(req): Json<SetOpcodeRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::set_region_opcode(&PathBuf::from(req.sfz_path), req.region_index, &req.name, &req.value)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
+struct OpcodePair {
+    name: String,
+    value: String,
+}
+
+#[derive(Deserialize)]
+struct SetCellOpcodesRequest {
+    #[serde(rename = "sfzPath")]
+    sfz_path: String,
+    #[serde(rename = "regionIndices")]
+    region_indices: Vec<usize>,
+    opcodes: Vec<OpcodePair>,
+}
+
+async fn set_cell_opcodes_handler(
+    Json(req): Json<SetCellOpcodesRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    let opcodes: Vec<(String, String)> = req.opcodes.into_iter().map(|o| (o.name, o.value)).collect();
+    sfz_write::set_cell_opcodes(&PathBuf::from(req.sfz_path), &req.region_indices, &opcodes)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -149,6 +191,8 @@ async fn main() {
         .route("/sfz/parse", post(sfz_parse_handler))
         .route("/audio/chunk", post(chunk_handler))
         .route("/sfz/add-region", post(add_region_handler))
+        .route("/sfz/set-opcode", post(set_opcode_handler))
+        .route("/sfz/set-cell-opcodes", post(set_cell_opcodes_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
