@@ -6,20 +6,50 @@
 // "reconstruct the whole file" round-trip anywhere, and building one is a
 // separate, bigger undertaking than this needs. Appending new text is
 // additive and never touches what's already there, so it doesn't need one.
+//
+// Every function below except open_working_copy/save reads/writes SFZ
+// *text* at a working-copy path, never the file the user actually opened -
+// see those two functions' own docs for why. The working copy lives in an
+// app-specific temp directory, NOT next to the real file, so anything that
+// needs to resolve a sample= path (relative to wherever the project's
+// actual assets live) is given the ORIGINAL path separately and derives
+// the project directory from THAT, never from the working path.
 use std::fs;
 use std::path::Path;
 
 use crate::sfz_parse::{self, ParsedSfz};
 
+// Copies the real file to a scratch working path (overwriting any stale
+// working copy already there, e.g. from a crashed previous session) and
+// parses THAT copy - every edit this app makes from here on targets the
+// working copy, never the original, until save() below explicitly mirrors
+// it back.
+pub fn open_working_copy(original_path: &Path, working_path: &Path) -> Result<ParsedSfz, String> {
+    fs::copy(original_path, working_path).map_err(|e| format!("failed to open file: {e}"))?;
+    sfz_parse::parse(working_path)
+}
+
+// Mirrors the working copy's current content onto the real file - the
+// only point anywhere in this app where the file the user actually opened
+// gets written to.
+pub fn save(working_path: &Path, original_path: &Path) -> Result<(), String> {
+    fs::copy(working_path, original_path).map_err(|e| format!("failed to save file: {e}"))?;
+    Ok(())
+}
+
 pub fn append_region(
-    sfz_path: &Path,
+    working_sfz_path: &Path,
+    original_sfz_path: &Path,
     sample_path: &str,
     note: u8,
     articulation_id: &str,
     articulation_label: Option<&str>,
     velocity: u8
 ) -> Result<ParsedSfz, String> {
-    let dir = sfz_path
+    // sample= is relative to the project directory (where the real file -
+    // and the actual sample files - live), not the working copy's own
+    // (temp, unrelated) directory.
+    let dir = original_sfz_path
         .parent()
         .ok_or_else(|| "sfz path has no parent directory".to_string())?;
     let resolved_sample = dir.join(sample_path);
@@ -27,7 +57,8 @@ pub fn append_region(
         return Err(format!("sample file not found: {}", resolved_sample.display()));
     }
 
-    let mut text = fs::read_to_string(sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
+    let mut text =
+        fs::read_to_string(working_sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
@@ -52,9 +83,9 @@ pub fn append_region(
     text.push_str(&format!("sw_last={articulation_id}\n"));
     text.push_str(&format!("sw_label={label}\n"));
 
-    fs::write(sfz_path, text).map_err(|e| format!("failed to write sfz file: {e}"))?;
+    fs::write(working_sfz_path, text).map_err(|e| format!("failed to write sfz file: {e}"))?;
 
-    sfz_parse::parse(sfz_path)
+    sfz_parse::parse(working_sfz_path)
 }
 
 // Byte offset where new text should land within the target region's own
@@ -135,7 +166,8 @@ fn validate_opcode(name: &str, value: &str) -> Result<(), String> {
 // whether that name already existed locally, only existed as an
 // inherited default, or never existed on this region at all.
 pub fn set_region_opcode(
-    sfz_path: &Path,
+    working_sfz_path: &Path,
+    original_sfz_path: &Path,
     region_index: usize,
     name: &str,
     value: &str
@@ -144,7 +176,9 @@ pub fn set_region_opcode(
     validate_opcode(name, value)?;
 
     if name == "sample" {
-        let dir = sfz_path
+        // Relative to the project directory, not the working copy's own
+        // (temp, unrelated) directory - see append_region.
+        let dir = original_sfz_path
             .parent()
             .ok_or_else(|| "sfz path has no parent directory".to_string())?;
         let resolved = dir.join(value);
@@ -153,7 +187,8 @@ pub fn set_region_opcode(
         }
     }
 
-    let mut text = fs::read_to_string(sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
+    let mut text =
+        fs::read_to_string(working_sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
     let mut offset = region_insertion_offset(&text, region_index)?;
 
     // Same EOF-append guard append_region already needs for its own case -
@@ -167,9 +202,9 @@ pub fn set_region_opcode(
 
     text.insert_str(offset, &format!("{name}={value}\n"));
 
-    fs::write(sfz_path, &text).map_err(|e| format!("failed to write sfz file: {e}"))?;
+    fs::write(working_sfz_path, &text).map_err(|e| format!("failed to write sfz file: {e}"))?;
 
-    sfz_parse::parse(sfz_path)
+    sfz_parse::parse(working_sfz_path)
 }
 
 // Applies the same set of opcodes to every region in `region_indices` in
@@ -187,7 +222,7 @@ pub fn set_region_opcode(
 // one - the standard approach for splicing multiple positions into one
 // string in a single pass.
 pub fn set_cell_opcodes(
-    sfz_path: &Path,
+    working_sfz_path: &Path,
     region_indices: &[usize],
     opcodes: &[(String, String)]
 ) -> Result<ParsedSfz, String> {
@@ -195,7 +230,8 @@ pub fn set_cell_opcodes(
         validate_opcode(name, value)?;
     }
 
-    let mut text = fs::read_to_string(sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
+    let mut text =
+        fs::read_to_string(working_sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
 
     let mut offsets: Vec<usize> = region_indices
         .iter()
@@ -218,7 +254,7 @@ pub fn set_cell_opcodes(
         text.insert_str(insert_offset, &block);
     }
 
-    fs::write(sfz_path, &text).map_err(|e| format!("failed to write sfz file: {e}"))?;
+    fs::write(working_sfz_path, &text).map_err(|e| format!("failed to write sfz file: {e}"))?;
 
-    sfz_parse::parse(sfz_path)
+    sfz_parse::parse(working_sfz_path)
 }

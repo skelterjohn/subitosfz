@@ -63,33 +63,71 @@ export default function App(): React.JSX.Element {
   // path is set, before the async parse resolves, locking the grid's cells
   // onto whatever instrument was current at that premature mount.
   const [loadGeneration, setLoadGeneration] = useState(0)
+  // Where edits actually land - an app-specific temp path computed by the
+  // main process (see get-working-sfz-path in main/index.ts), never next
+  // to the real file. Resolved fresh by loadSfzFile below; null whenever
+  // sfzFilePath is, so "no file open" and "no working copy yet" can't
+  // drift out of sync.
+  const [workingPath, setWorkingPath] = useState<string | null>(null)
+  // True once the working copy has diverged from the real file - set on
+  // every successful edit, cleared on open (fresh copy, nothing to diverge
+  // yet) and on save (the two are back in sync). Purely a display concern
+  // (the title-bar asterisk below); doesn't gate anything.
+  const [dirty, setDirty] = useState(false)
 
   // Shared by the "open" button and the startup auto-reload - only the
-  // source of the path differs between them.
+  // source of the path differs between them. Copies the real file into a
+  // fresh working copy and parses THAT, so sfzFilePath itself is never
+  // touched by anything other than this function and saveSfzFile below.
   async function loadSfzFile(path: string): Promise<void> {
     setSfzFilePath(path)
     setSfzLoadError(null)
 
     try {
+      const working = await window.api.getWorkingSfzPath(path)
       const port = await window.api.getServerPort()
-      const res = await fetch(`http://127.0.0.1:${port}/sfz/parse`, {
+      const res = await fetch(`http://127.0.0.1:${port}/sfz/open`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path })
+        body: JSON.stringify({ originalPath: path, workingPath: working })
       })
       if (!res.ok) {
         const body = await res.json().catch(() => null)
         throw new Error(body?.error ?? `request failed (${res.status})`)
       }
       const parsed = (await res.json()) as ParsedSfzResponse
+      setWorkingPath(working)
       setInstrument(instrumentFromParsedSfz(parsed))
       setSelectedCell(null)
       setLoadGeneration((g) => g + 1)
+      setDirty(false)
       // Only cache on success - caching a path that fails to parse would
       // just repeat the same failure on every future startup.
       window.api.setLastSfzFile(path)
     } catch (err) {
       setSfzLoadError(String(err))
+    }
+  }
+
+  // The only place anywhere in this app that writes to the file the user
+  // actually opened - everything else (adding/editing opcodes, assigning
+  // drawer samples) only ever touches the working copy.
+  async function saveSfzFile(): Promise<void> {
+    if (!sfzFilePath || !workingPath) return
+    try {
+      const port = await window.api.getServerPort()
+      const res = await fetch(`http://127.0.0.1:${port}/sfz/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workingPath, originalPath: sfzFilePath })
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `request failed (${res.status})`)
+      }
+      setDirty(false)
+    } catch (err) {
+      window.alert(`Failed to save: ${String(err)}`)
     }
   }
 
@@ -99,12 +137,18 @@ export default function App(): React.JSX.Element {
   // on stays visible even if the edit moved it to a different cell.
   // Rethrows on failure so the calling row can show its own inline error.
   async function setRegionOpcode(regionIndex: number, name: string, value: string): Promise<void> {
-    if (!sfzFilePath) throw new Error('no instrument is open')
+    if (!workingPath || !sfzFilePath) throw new Error('no instrument is open')
     const port = await window.api.getServerPort()
     const res = await fetch(`http://127.0.0.1:${port}/sfz/set-opcode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sfzPath: sfzFilePath, regionIndex, name, value })
+      body: JSON.stringify({
+        workingSfzPath: workingPath,
+        originalSfzPath: sfzFilePath,
+        regionIndex,
+        name,
+        value
+      })
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
@@ -114,6 +158,7 @@ export default function App(): React.JSX.Element {
     const next = instrumentFromParsedSfz(parsed)
     setInstrument(next)
     setSelectedCell(findCellByRegionIndex(next, regionIndex))
+    setDirty(true)
     if (CELL_AFFECTING_OPCODES.has(name)) {
       setLoadGeneration((g) => g + 1)
     }
@@ -131,13 +176,13 @@ export default function App(): React.JSX.Element {
     regionIndices: number[],
     opcodes: Array<{ name: string; value: string }>
   ): Promise<void> {
-    if (!sfzFilePath) throw new Error('no instrument is open')
+    if (!workingPath) throw new Error('no instrument is open')
     if (regionIndices.length === 0) return
     const port = await window.api.getServerPort()
     const res = await fetch(`http://127.0.0.1:${port}/sfz/set-cell-opcodes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sfzPath: sfzFilePath, regionIndices, opcodes })
+      body: JSON.stringify({ workingSfzPath: workingPath, regionIndices, opcodes })
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
@@ -147,6 +192,7 @@ export default function App(): React.JSX.Element {
     const next = instrumentFromParsedSfz(parsed)
     setInstrument(next)
     setSelectedCell(findCellByRegionIndex(next, regionIndices[0]))
+    setDirty(true)
     if (opcodes.some((op) => CELL_AFFECTING_OPCODES.has(op.name))) {
       setLoadGeneration((g) => g + 1)
     }
@@ -179,10 +225,19 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
-  // File menu (main/index.ts) just forwards clicks here - Open/Import reuse
-  // the exact same functions as their toolbar buttons. Save/Save As don't do
-  // anything real yet: there's no .sfz serializer in this app at all, so
-  // wiring them to a fake success would be worse than a visible stub.
+  // File menu (main/index.ts) just forwards clicks here - Open/Import/Save
+  // reuse the exact same functions as their toolbar buttons. Save As still
+  // doesn't do anything real: writing a working copy's content out under a
+  // different path/directory would need to rewrite every region's relative
+  // sample= path too, which is a separate, bigger feature than Save.
+  //
+  // Re-subscribes whenever sfzFilePath/workingPath change (i.e. on every
+  // open - edits don't touch either) rather than once on mount: an empty
+  // dependency array here would freeze the onMenuSave callback's closure
+  // on whatever saveSfzFile looked like at mount, when both paths were
+  // still null - Save would silently no-op forever after, since that
+  // captured closure's `if (!sfzFilePath || !workingPath) return` guard
+  // never sees a later open.
   useEffect(() => {
     if (!window.api) return
     const offImport = window.api.onMenuImport(() => setImportOpen(true))
@@ -191,10 +246,10 @@ export default function App(): React.JSX.Element {
       openSfzFile()
     })
     const offSave = window.api.onMenuSave(() => {
-      console.log('[menu] save requested - not implemented yet (no .sfz serializer)')
+      saveSfzFile()
     })
     const offSaveAs = window.api.onMenuSaveAs(() => {
-      console.log('[menu] save as requested - not implemented yet (no .sfz serializer)')
+      console.log('[menu] save as requested - not implemented yet')
     })
     return () => {
       offImport()
@@ -203,7 +258,7 @@ export default function App(): React.JSX.Element {
       offSave()
       offSaveAs()
     }
-  }, [])
+  }, [sfzFilePath, workingPath])
 
   // The drawer is a pure filesystem diff (unassigned .wav files in the
   // project directory) - recomputed whenever the instrument changes (a
@@ -216,6 +271,9 @@ export default function App(): React.JSX.Element {
       return
     }
     let cancelled = false
+    // The PROJECT directory (where actual sample files live), not the
+    // working copy's temp directory - listDirectory just derives dirname
+    // from whatever path it's given.
     window.api.listDirectory(sfzFilePath).then((names) => {
       if (!cancelled) setDrawerChunks(unassignedChunks(instrument, names))
     })
@@ -223,6 +281,33 @@ export default function App(): React.JSX.Element {
       cancelled = true
     }
   }, [instrument, sfzFilePath, drawerRefreshNonce])
+
+  // Re-parses the working copy in place (no fresh copy from the original,
+  // unlike loadSfzFile - used after a mutation that already landed on the
+  // working copy itself, like assigning a drawer sample, so it picks up
+  // the change without discarding any other not-yet-saved edits).
+  async function reparseWorkingCopy(): Promise<void> {
+    if (!workingPath) return
+    try {
+      const port = await window.api.getServerPort()
+      const res = await fetch(`http://127.0.0.1:${port}/sfz/parse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: workingPath })
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `request failed (${res.status})`)
+      }
+      const parsed = (await res.json()) as ParsedSfzResponse
+      setInstrument(instrumentFromParsedSfz(parsed))
+      setSelectedCell(null)
+      setLoadGeneration((g) => g + 1)
+      setDirty(true)
+    } catch (err) {
+      setSfzLoadError(String(err))
+    }
+  }
 
   useEffect(() => {
     if (!window.api) return
@@ -259,7 +344,10 @@ export default function App(): React.JSX.Element {
     >
       {sfzFilePath && (
         <div className="open-row">
-          <span className="title-bar__sfz-path">{sfzFilePath}</span>
+          <span className="title-bar__sfz-path">
+            {sfzFilePath}
+            {dirty && '*'}
+          </span>
           {sfzLoadError && (
             <span className="title-bar__sfz-error">failed to load: {sfzLoadError}</span>
           )}
@@ -274,13 +362,14 @@ export default function App(): React.JSX.Element {
           onImported={() => setDrawerRefreshNonce((n) => n + 1)}
         />
       )}
-      {assigningChunk && sfzFilePath && (
+      {assigningChunk && sfzFilePath && workingPath && (
         <AssignChunkModal
           chunk={assigningChunk}
           sfzFilePath={sfzFilePath}
+          workingSfzPath={workingPath}
           existingArticulations={instrument.articulationAxis}
           onClose={() => setAssigningChunk(null)}
-          onAssigned={() => loadSfzFile(sfzFilePath)}
+          onAssigned={reparseWorkingCopy}
         />
       )}
 

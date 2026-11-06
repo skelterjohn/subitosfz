@@ -11,7 +11,13 @@ type Status = 'idle' | 'saving' | 'error'
 
 interface Props {
   chunk: DrawerChunk
+  // The real, opened file's path - used to resolve where sample files
+  // actually live (both for this component's own playback preview and for
+  // the backend's sample= existence check), never written to directly.
   sfzFilePath: string
+  // Where the add-region edit actually lands - an app-specific temp copy,
+  // never the real file (see App.tsx's workingPath).
+  workingSfzPath: string
   existingArticulations: AxisValue[]
   onClose: () => void
   onAssigned: () => void
@@ -20,6 +26,7 @@ interface Props {
 export default function AssignChunkModal({
   chunk,
   sfzFilePath,
+  workingSfzPath,
   existingArticulations,
   onClose,
   onAssigned
@@ -109,7 +116,8 @@ export default function AssignChunkModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sfzPath: sfzFilePath,
+          workingSfzPath,
+          originalSfzPath: sfzFilePath,
           samplePath: chunk.fileName,
           note,
           articulationId,

@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readdir, readFile, unlink } from 'node:fs/promises'
 import windowStateKeeper from 'electron-window-state'
 
@@ -74,6 +75,20 @@ function appIconPath(): string {
   // Dev: main process output lives at app/out/main, resources/ is a sibling
   // of src/ at the app root.
   return join(__dirname, '../../resources/icon.png')
+}
+
+// Every edit in the app targets this working copy, never the file the
+// user actually opened - an app-specific temp directory, not next to the
+// real file, so it never shows up alongside the user's own files. Hashed
+// (not just the basename) so two different projects that happen to share
+// a filename never collide; the directory is created up front since
+// Rust's fs::copy (which writes the working copy itself) doesn't create
+// parent directories for its destination.
+function workingSfzPath(originalPath: string): string {
+  const dir = join(app.getPath('temp'), 'subitosfz')
+  mkdirSync(dir, { recursive: true })
+  const hash = createHash('sha1').update(originalPath).digest('hex').slice(0, 12)
+  return join(dir, `${hash}-${basename(originalPath)}`)
 }
 
 function sidecarBinaryPath(): string {
@@ -184,6 +199,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('get-server-port', () => serverPort)
   ipcMain.handle('get-start-time', () => appStartTime)
+  ipcMain.handle('get-working-sfz-path', (_event, originalPath: string) => workingSfzPath(originalPath))
 
   ipcMain.handle('choose-sf2-file', async () => {
     if (!mainWindow) return null

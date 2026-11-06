@@ -113,8 +113,10 @@ async fn chunk_handler(
 
 #[derive(Deserialize)]
 struct AddRegionRequest {
-    #[serde(rename = "sfzPath")]
-    sfz_path: String,
+    #[serde(rename = "workingSfzPath")]
+    working_sfz_path: String,
+    #[serde(rename = "originalSfzPath")]
+    original_sfz_path: String,
     #[serde(rename = "samplePath")]
     sample_path: String,
     note: u8,
@@ -129,7 +131,8 @@ async fn add_region_handler(
     Json(req): Json<AddRegionRequest>,
 ) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
     sfz_write::append_region(
-        &PathBuf::from(req.sfz_path),
+        &PathBuf::from(req.working_sfz_path),
+        &PathBuf::from(req.original_sfz_path),
         &req.sample_path,
         req.note,
         &req.articulation_id,
@@ -142,8 +145,10 @@ async fn add_region_handler(
 
 #[derive(Deserialize)]
 struct SetOpcodeRequest {
-    #[serde(rename = "sfzPath")]
-    sfz_path: String,
+    #[serde(rename = "workingSfzPath")]
+    working_sfz_path: String,
+    #[serde(rename = "originalSfzPath")]
+    original_sfz_path: String,
     #[serde(rename = "regionIndex")]
     region_index: usize,
     name: String,
@@ -153,9 +158,15 @@ struct SetOpcodeRequest {
 async fn set_opcode_handler(
     Json(req): Json<SetOpcodeRequest>,
 ) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
-    sfz_write::set_region_opcode(&PathBuf::from(req.sfz_path), req.region_index, &req.name, &req.value)
-        .map(Json)
-        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+    sfz_write::set_region_opcode(
+        &PathBuf::from(req.working_sfz_path),
+        &PathBuf::from(req.original_sfz_path),
+        req.region_index,
+        &req.name,
+        &req.value
+    )
+    .map(Json)
+    .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }
 
 #[derive(Deserialize)]
@@ -166,8 +177,8 @@ struct OpcodePair {
 
 #[derive(Deserialize)]
 struct SetCellOpcodesRequest {
-    #[serde(rename = "sfzPath")]
-    sfz_path: String,
+    #[serde(rename = "workingSfzPath")]
+    working_sfz_path: String,
     #[serde(rename = "regionIndices")]
     region_indices: Vec<usize>,
     opcodes: Vec<OpcodePair>,
@@ -177,8 +188,40 @@ async fn set_cell_opcodes_handler(
     Json(req): Json<SetCellOpcodesRequest>,
 ) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
     let opcodes: Vec<(String, String)> = req.opcodes.into_iter().map(|o| (o.name, o.value)).collect();
-    sfz_write::set_cell_opcodes(&PathBuf::from(req.sfz_path), &req.region_indices, &opcodes)
+    sfz_write::set_cell_opcodes(&PathBuf::from(req.working_sfz_path), &req.region_indices, &opcodes)
         .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
+struct OpenRequest {
+    #[serde(rename = "originalPath")]
+    original_path: String,
+    #[serde(rename = "workingPath")]
+    working_path: String,
+}
+
+async fn open_handler(
+    Json(req): Json<OpenRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::open_working_copy(&PathBuf::from(req.original_path), &PathBuf::from(req.working_path))
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
+struct SaveRequest {
+    #[serde(rename = "workingPath")]
+    working_path: String,
+    #[serde(rename = "originalPath")]
+    original_path: String,
+}
+
+async fn save_handler(
+    Json(req): Json<SaveRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::save(&PathBuf::from(req.working_path), &PathBuf::from(req.original_path))
+        .map(|()| StatusCode::OK)
         .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }
 
@@ -189,6 +232,8 @@ async fn main() {
         .route("/sf2/presets", post(sf2_presets))
         .route("/sf2/export", post(sf2_export))
         .route("/sfz/parse", post(sfz_parse_handler))
+        .route("/sfz/open", post(open_handler))
+        .route("/sfz/save", post(save_handler))
         .route("/audio/chunk", post(chunk_handler))
         .route("/sfz/add-region", post(add_region_handler))
         .route("/sfz/set-opcode", post(set_opcode_handler))

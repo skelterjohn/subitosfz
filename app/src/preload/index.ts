@@ -12,6 +12,8 @@ function onMenuEvent(channel: string, callback: () => void): () => void {
 const api = {
   getServerPort: (): Promise<number> => ipcRenderer.invoke('get-server-port'),
   getStartTime: (): Promise<number> => ipcRenderer.invoke('get-start-time'),
+  getWorkingSfzPath: (originalPath: string): Promise<string> =>
+    ipcRenderer.invoke('get-working-sfz-path', originalPath),
   chooseSf2File: (): Promise<string | null> => ipcRenderer.invoke('choose-sf2-file'),
   chooseDirectory: (): Promise<string | null> => ipcRenderer.invoke('choose-directory'),
   chooseSfzFile: (): Promise<string | null> => ipcRenderer.invoke('choose-sfz-file'),
