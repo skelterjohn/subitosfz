@@ -352,17 +352,12 @@ export default function InstrumentGrid({
                 {isOverlap ? (
                   <span className="instrument-grid__cell-count">!</span>
                 ) : (
-                  <>
-                    {/* Always shown, not just when note is a displayed axis:
-                        a cell's anchor can differ from a pivoted note (it's
-                        covering that note via pitch-shift), so this is the
-                        only place that distinction is visible at all when
-                        note is the fixed axis. */}
-                    <span className="instrument-grid__cell-note">
-                      {midiToName(Number(cell.note))}
-                    </span>
-                    <span className="instrument-grid__cell-count">{cell.samples.length}</span>
-                  </>
+                  // Always shown, not just when note is a displayed axis: a
+                  // cell's anchor can differ from a pivoted note (it's
+                  // covering that note via pitch-shift), so this is the
+                  // only place that distinction is visible at all when note
+                  // is the fixed axis.
+                  <span className="instrument-grid__cell-note">{midiToName(Number(cell.note))}</span>
                 )}
               </div>
             )
