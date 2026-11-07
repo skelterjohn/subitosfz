@@ -47,7 +47,12 @@ export default function SampleEditorPanel({
       <div className="sample-editor__fields">
         <PitchRow
           note={Number(cell.note)}
-          onCommit={(note) => setOpcodes([{ name: 'key', value: String(note) }])}
+          // pitch_keycenter, not key - key also sets lokey/hikey (SFZ
+          // shorthand), which would collide with the pitch-range row below
+          // the moment it's edited after this one (append-only opcode
+          // edits mean whichever line lands last wins) - see sfz_write.rs's
+          // append_region for the same reasoning on the write side.
+          onCommit={(note) => setOpcodes([{ name: 'pitch_keycenter', value: String(note) }])}
         />
         <RangeRow
           label="pitch range"

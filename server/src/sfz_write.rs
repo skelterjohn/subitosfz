@@ -82,11 +82,18 @@ pub fn append_region(
     text.push('\n');
     text.push_str("<region>\n");
     text.push_str(&format!("sample={normalized_sample_path}\n"));
-    // key=note sets pitch_keycenter (the sample's actual recorded pitch,
-    // used for pitch-shifting neighboring keys) - independent of lokey/
-    // hikey, which are the full key range this region plays for and may be
-    // wider than just `note` itself.
-    text.push_str(&format!("key={note}\n"));
+    // pitch_keycenter=note - the sample's actual recorded pitch, used for
+    // pitch-shifting neighboring keys - independent of lokey/hikey, which
+    // are the full key range this region plays for and may be wider than
+    // just `note` itself. Deliberately NOT the `key` opcode: key is SFZ
+    // shorthand for setting pitch_keycenter AND lokey AND hikey all to the
+    // same value, which would collide with the explicit lokey/hikey lines
+    // below the moment anyone edits this region later - this app's opcode
+    // editor only ever appends a new line for an edited opcode, so a later
+    // `key=` edit (e.g. just nudging the pitch) would land after these
+    // lokey/hikey lines and silently collapse the key range back down to a
+    // single note.
+    text.push_str(&format!("pitch_keycenter={note}\n"));
     text.push_str(&format!("lokey={lokey}\n"));
     text.push_str(&format!("hikey={hikey}\n"));
     text.push_str(&format!("lovel={lovel}\n"));
