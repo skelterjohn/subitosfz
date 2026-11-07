@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AxisValue, CellRecord } from '../model/instrument'
-import { cellCoversPoint, midiToName } from '../model/instrument'
+import { cellsOverlap, midiToName } from '../model/instrument'
 import type { DrawerChunk } from '../model/drawer'
 import './ImportSf2Modal.css'
 import './AssignChunkModal.css'
@@ -19,12 +19,13 @@ interface Props {
   // never the real file (see App.tsx's workingPath).
   workingSfzPath: string
   existingArticulations: AxisValue[]
-  // Every existing cell, so a pitch/velocity/articulation combo that's
-  // already covered can be flagged before assigning into it.
+  // Every existing cell, so a key range/velocity range/articulation combo
+  // that already overlaps one can be flagged before assigning into it.
   cells: CellRecord[]
   // The cell currently shown in the sample editor panel, if any - used only
-  // to prepopulate pitch/velocity/articulation below (the audio file itself
-  // always comes from `chunk`, never from here).
+  // to prepopulate the cell-defining fields below (key range, velocity
+  // range, articulation) - the audio file itself always comes from `chunk`,
+  // never from here.
   selectedCell: CellRecord | null
   onClose: () => void
   onAssigned: () => void
@@ -40,15 +41,19 @@ export default function AssignChunkModal({
   onClose,
   onAssigned
 }: Props): React.JSX.Element {
-  // Prepopulated from the currently selected cell, if there is one - the
-  // common case is assigning another take (e.g. a round-robin or stereo
-  // pair) into the same cell the user already has open, not starting from
-  // scratch every time. Falls back to the old fixed defaults otherwise.
-  // Read once at mount (this modal remounts fresh on every open - see its
+  // Prepopulated from the currently selected cell's own cell-defining
+  // fields, if there is one - the common case is assigning another take
+  // (e.g. a round-robin or stereo pair) into the same cell the user already
+  // has open, not starting from scratch every time. Falls back to the old
+  // fixed defaults (a single-key, single-velocity cell) otherwise. Read
+  // once at mount (this modal remounts fresh on every open - see its
   // conditional render in App.tsx), not kept in sync afterward - it's a
   // starting point the user can still edit, not a live binding.
   const [note, setNote] = useState(() => (selectedCell ? Number(selectedCell.note) : 60))
-  const [velocity, setVelocity] = useState(() => (selectedCell ? selectedCell.loVel : 100))
+  const [loKey, setLoKey] = useState(() => (selectedCell ? selectedCell.loKey : 60))
+  const [hiKey, setHiKey] = useState(() => (selectedCell ? selectedCell.hiKey : 60))
+  const [loVel, setLoVel] = useState(() => (selectedCell ? selectedCell.loVel : 100))
+  const [hiVel, setHiVel] = useState(() => (selectedCell ? selectedCell.hiVel : 100))
   const [articulationChoice, setArticulationChoice] = useState(
     () => selectedCell?.articulation ?? existingArticulations[0]?.id ?? NEW_ARTICULATION
   )
@@ -105,29 +110,35 @@ export default function AssignChunkModal({
     ? newArticulationLabel.trim() || undefined
     : existingArticulations.find((a) => a.id === articulationChoice)?.label
 
-  const noteValid = Number.isInteger(note) && note >= 0 && note <= 127
-  const velocityValid = Number.isInteger(velocity) && velocity >= 0 && velocity <= 127
+  const inMidiRange = (v: number): boolean => Number.isInteger(v) && v >= 0 && v <= 127
+  const noteValid = inMidiRange(note)
+  const keyRangeValid = inMidiRange(loKey) && inMidiRange(hiKey) && loKey <= hiKey
+  const velRangeValid = inMidiRange(loVel) && inMidiRange(hiVel) && loVel <= hiVel
   const articulationValid = articulationId.length > 0
-  const canSave = noteValid && velocityValid && articulationValid && status !== 'saving'
+  const canSave = noteValid && keyRangeValid && velRangeValid && articulationValid && status !== 'saving'
 
-  // Shown next to the (otherwise unexplained) disabled button - MIDI
-  // pitch/velocity only go up to 127, which isn't obvious from a bare
-  // number input with no visible max.
+  // Shown next to the (otherwise unexplained) disabled button - MIDI values
+  // only go up to 127, which isn't obvious from a bare number input with no
+  // visible max, and a reversed lo/hi range would otherwise just silently
+  // never match anything.
   const validationMessage = !noteValid
     ? 'pitch must be an integer from 0 to 127'
-    : !velocityValid
-      ? 'velocity must be an integer from 0 to 127'
-      : !articulationValid
-        ? 'enter an id for the new articulation'
-        : null
+    : !keyRangeValid
+      ? 'key range must be 0-127 with lo ≤ hi'
+      : !velRangeValid
+        ? 'velocity range must be 0-127 with lo ≤ hi'
+        : !articulationValid
+          ? 'enter an id for the new articulation'
+          : null
 
   // Not blocking - overlapping regions are valid SFZ (both sound together),
   // just usually not what was intended, so this is a heads-up rather than
   // something that disables the assign button.
   const overlappingCells = useMemo(() => {
-    if (!noteValid || !velocityValid || !articulationValid) return []
-    return cells.filter((c) => cellCoversPoint(c, note, velocity, articulationId))
-  }, [cells, note, velocity, articulationId, noteValid, velocityValid, articulationValid])
+    if (!keyRangeValid || !velRangeValid || !articulationValid) return []
+    const range = { loKey, hiKey, loVel, hiVel, articulation: articulationId }
+    return cells.filter((c) => cellsOverlap(c, range))
+  }, [cells, loKey, hiKey, loVel, hiVel, articulationId, keyRangeValid, velRangeValid, articulationValid])
 
   async function save(): Promise<void> {
     if (!canSave) return
@@ -144,9 +155,12 @@ export default function AssignChunkModal({
           originalSfzPath: sfzFilePath,
           samplePath: chunk.fileName,
           note,
+          lokey: loKey,
+          hikey: hiKey,
+          lovel: loVel,
+          hivel: hiVel,
           articulationId,
-          articulationLabel,
-          velocity
+          articulationLabel
         })
       })
       if (!res.ok) {
@@ -203,6 +217,30 @@ export default function AssignChunkModal({
           </section>
 
           <section className="import-modal__field">
+            <span className="import-modal__label">key range</span>
+            <div className="import-modal__row">
+              <input
+                type="number"
+                min={0}
+                max={127}
+                value={loKey}
+                onChange={(e) => setLoKey(Number(e.target.value))}
+              />
+              <span>–</span>
+              <input
+                type="number"
+                min={0}
+                max={127}
+                value={hiKey}
+                onChange={(e) => setHiKey(Number(e.target.value))}
+              />
+              <span className="import-modal__path">
+                {keyRangeValid ? `${midiToName(loKey)}–${midiToName(hiKey)}` : 'invalid'}
+              </span>
+            </div>
+          </section>
+
+          <section className="import-modal__field">
             <span className="import-modal__label">articulation</span>
             <div className="import-modal__row">
               <select
@@ -236,16 +274,24 @@ export default function AssignChunkModal({
           </section>
 
           <section className="import-modal__field">
-            <span className="import-modal__label">velocity</span>
+            <span className="import-modal__label">velocity range</span>
             <div className="import-modal__row">
               <input
                 type="number"
                 min={0}
                 max={127}
-                value={velocity}
-                onChange={(e) => setVelocity(Number(e.target.value))}
+                value={loVel}
+                onChange={(e) => setLoVel(Number(e.target.value))}
               />
-              {!velocityValid && <span className="import-modal__path">invalid</span>}
+              <span>–</span>
+              <input
+                type="number"
+                min={0}
+                max={127}
+                value={hiVel}
+                onChange={(e) => setHiVel(Number(e.target.value))}
+              />
+              {!velRangeValid && <span className="import-modal__path">invalid</span>}
             </div>
           </section>
 

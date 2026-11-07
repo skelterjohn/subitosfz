@@ -84,23 +84,31 @@ export function cellRange(cell: CellRecord, axis: RangeAxis): [number, number] {
   return axis === 'note' ? [cell.loKey, cell.hiKey] : [cell.loVel, cell.hiVel]
 }
 
-// True if this cell would already sound for the given note/velocity/
-// articulation - used to warn before assigning a new sample at a point an
-// existing cell's range already covers, since SFZ plays every matching
-// region at once rather than picking one (see InstrumentGrid's "overlap"
-// handling for the same ambiguity after the fact).
-export function cellCoversPoint(
-  cell: CellRecord,
-  note: number,
-  velocity: number,
+// The cell-defining criteria (key range, velocity range, articulation) a
+// region or an about-to-be-created one is gated on - a structural subset of
+// CellRecord, so an actual CellRecord satisfies this without conversion.
+export interface CellRange {
+  loKey: number
+  hiKey: number
+  loVel: number
+  hiVel: number
   articulation: string
-): boolean {
+}
+
+// True if two cell ranges would both sound for some shared note/velocity -
+// used to warn before assigning a new sample whose key/velocity range
+// overlaps an existing cell's, since SFZ plays every matching region at
+// once rather than picking one (see InstrumentGrid's "overlap" handling for
+// the same ambiguity after the fact). Standard interval-overlap test on
+// both axes at once, not point containment - a new region can itself be a
+// range, not just a single key/velocity.
+export function cellsOverlap(a: CellRange, b: CellRange): boolean {
   return (
-    cell.articulation === articulation &&
-    cell.loKey <= note &&
-    note <= cell.hiKey &&
-    cell.loVel <= velocity &&
-    velocity <= cell.hiVel
+    a.articulation === b.articulation &&
+    a.loKey <= b.hiKey &&
+    a.hiKey >= b.loKey &&
+    a.loVel <= b.hiVel &&
+    a.hiVel >= b.loVel
   )
 }
 

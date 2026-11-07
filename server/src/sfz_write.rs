@@ -37,15 +37,26 @@ pub fn save(working_path: &Path, original_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append_region(
     working_sfz_path: &Path,
     original_sfz_path: &Path,
     sample_path: &str,
     note: u8,
+    lokey: u8,
+    hikey: u8,
+    lovel: u8,
+    hivel: u8,
     articulation_id: &str,
-    articulation_label: Option<&str>,
-    velocity: u8
+    articulation_label: Option<&str>
 ) -> Result<ParsedSfz, String> {
+    if lokey > hikey {
+        return Err(format!("lokey ({lokey}) cannot be greater than hikey ({hikey})"));
+    }
+    if lovel > hivel {
+        return Err(format!("lovel ({lovel}) cannot be greater than hivel ({hivel})"));
+    }
+
     // sample= is relative to the project directory (where the real file -
     // and the actual sample files - live), not the working copy's own
     // (temp, unrelated) directory.
@@ -71,15 +82,15 @@ pub fn append_region(
     text.push('\n');
     text.push_str("<region>\n");
     text.push_str(&format!("sample={normalized_sample_path}\n"));
-    // key= alone is enough (SFZ shorthand for lokey=hikey=pitch_keycenter),
-    // but lokey/hikey are written explicitly too so region_key_range (and
-    // the UI's own "region" opcode section) see them directly rather than
-    // falling back to deriving them from key=.
+    // key=note sets pitch_keycenter (the sample's actual recorded pitch,
+    // used for pitch-shifting neighboring keys) - independent of lokey/
+    // hikey, which are the full key range this region plays for and may be
+    // wider than just `note` itself.
     text.push_str(&format!("key={note}\n"));
-    text.push_str(&format!("lokey={note}\n"));
-    text.push_str(&format!("hikey={note}\n"));
-    text.push_str(&format!("lovel={velocity}\n"));
-    text.push_str(&format!("hivel={velocity}\n"));
+    text.push_str(&format!("lokey={lokey}\n"));
+    text.push_str(&format!("hikey={hikey}\n"));
+    text.push_str(&format!("lovel={lovel}\n"));
+    text.push_str(&format!("hivel={hivel}\n"));
     text.push_str(&format!("sw_last={articulation_id}\n"));
     text.push_str(&format!("sw_label={label}\n"));
 

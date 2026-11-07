@@ -120,11 +120,14 @@ struct AddRegionRequest {
     #[serde(rename = "samplePath")]
     sample_path: String,
     note: u8,
+    lokey: u8,
+    hikey: u8,
+    lovel: u8,
+    hivel: u8,
     #[serde(rename = "articulationId")]
     articulation_id: String,
     #[serde(rename = "articulationLabel")]
     articulation_label: Option<String>,
-    velocity: u8,
 }
 
 async fn add_region_handler(
@@ -135,9 +138,12 @@ async fn add_region_handler(
         &PathBuf::from(req.original_sfz_path),
         &req.sample_path,
         req.note,
+        req.lokey,
+        req.hikey,
+        req.lovel,
+        req.hivel,
         &req.articulation_id,
-        req.articulation_label.as_deref(),
-        req.velocity
+        req.articulation_label.as_deref()
     )
     .map(Json)
     .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
