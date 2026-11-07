@@ -22,6 +22,10 @@ interface Props {
   // Every existing cell, so a pitch/velocity/articulation combo that's
   // already covered can be flagged before assigning into it.
   cells: CellRecord[]
+  // The cell currently shown in the sample editor panel, if any - used only
+  // to prepopulate pitch/velocity/articulation below (the audio file itself
+  // always comes from `chunk`, never from here).
+  selectedCell: CellRecord | null
   onClose: () => void
   onAssigned: () => void
 }
@@ -32,13 +36,21 @@ export default function AssignChunkModal({
   workingSfzPath,
   existingArticulations,
   cells,
+  selectedCell,
   onClose,
   onAssigned
 }: Props): React.JSX.Element {
-  const [note, setNote] = useState(60)
-  const [velocity, setVelocity] = useState(100)
+  // Prepopulated from the currently selected cell, if there is one - the
+  // common case is assigning another take (e.g. a round-robin or stereo
+  // pair) into the same cell the user already has open, not starting from
+  // scratch every time. Falls back to the old fixed defaults otherwise.
+  // Read once at mount (this modal remounts fresh on every open - see its
+  // conditional render in App.tsx), not kept in sync afterward - it's a
+  // starting point the user can still edit, not a live binding.
+  const [note, setNote] = useState(() => (selectedCell ? Number(selectedCell.note) : 60))
+  const [velocity, setVelocity] = useState(() => (selectedCell ? selectedCell.loVel : 100))
   const [articulationChoice, setArticulationChoice] = useState(
-    existingArticulations[0]?.id ?? NEW_ARTICULATION
+    () => selectedCell?.articulation ?? existingArticulations[0]?.id ?? NEW_ARTICULATION
   )
   const [newArticulationId, setNewArticulationId] = useState('')
   const [newArticulationLabel, setNewArticulationLabel] = useState('')

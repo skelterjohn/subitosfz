@@ -413,6 +413,7 @@ export default function App(): React.JSX.Element {
           workingSfzPath={workingPath}
           existingArticulations={instrument.articulationAxis}
           cells={instrument.cells}
+          selectedCell={selectedCell}
           onClose={() => setAssigningChunk(null)}
           onAssigned={reparseWorkingCopy}
         />
