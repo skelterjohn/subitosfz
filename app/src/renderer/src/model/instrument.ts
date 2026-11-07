@@ -84,6 +84,26 @@ export function cellRange(cell: CellRecord, axis: RangeAxis): [number, number] {
   return axis === 'note' ? [cell.loKey, cell.hiKey] : [cell.loVel, cell.hiVel]
 }
 
+// True if this cell would already sound for the given note/velocity/
+// articulation - used to warn before assigning a new sample at a point an
+// existing cell's range already covers, since SFZ plays every matching
+// region at once rather than picking one (see InstrumentGrid's "overlap"
+// handling for the same ambiguity after the fact).
+export function cellCoversPoint(
+  cell: CellRecord,
+  note: number,
+  velocity: number,
+  articulation: string
+): boolean {
+  return (
+    cell.articulation === articulation &&
+    cell.loKey <= note &&
+    note <= cell.hiKey &&
+    cell.loVel <= velocity &&
+    velocity <= cell.hiVel
+  )
+}
+
 // Everything the grid needs to render: the three axes' actual values, and
 // the cells to place within them. noteAxis/velocityAxis are only used as
 // convenience defaults (initial pivot value, emptiness check) - the grid

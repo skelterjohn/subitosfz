@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import type { AxisValue } from '../model/instrument'
-import { midiToName } from '../model/instrument'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { AxisValue, CellRecord } from '../model/instrument'
+import { cellCoversPoint, midiToName } from '../model/instrument'
 import type { DrawerChunk } from '../model/drawer'
 import './ImportSf2Modal.css'
 import './AssignChunkModal.css'
@@ -19,6 +19,9 @@ interface Props {
   // never the real file (see App.tsx's workingPath).
   workingSfzPath: string
   existingArticulations: AxisValue[]
+  // Every existing cell, so a pitch/velocity/articulation combo that's
+  // already covered can be flagged before assigning into it.
+  cells: CellRecord[]
   onClose: () => void
   onAssigned: () => void
 }
@@ -28,6 +31,7 @@ export default function AssignChunkModal({
   sfzFilePath,
   workingSfzPath,
   existingArticulations,
+  cells,
   onClose,
   onAssigned
 }: Props): React.JSX.Element {
@@ -104,6 +108,14 @@ export default function AssignChunkModal({
       : !articulationValid
         ? 'enter an id for the new articulation'
         : null
+
+  // Not blocking - overlapping regions are valid SFZ (both sound together),
+  // just usually not what was intended, so this is a heads-up rather than
+  // something that disables the assign button.
+  const overlappingCells = useMemo(() => {
+    if (!noteValid || !velocityValid || !articulationValid) return []
+    return cells.filter((c) => cellCoversPoint(c, note, velocity, articulationId))
+  }, [cells, note, velocity, articulationId, noteValid, velocityValid, articulationValid])
 
   async function save(): Promise<void> {
     if (!canSave) return
@@ -231,6 +243,19 @@ export default function AssignChunkModal({
             )}
             {status !== 'error' && validationMessage && (
               <p className="import-modal__error">{validationMessage}</p>
+            )}
+            {status !== 'error' && !validationMessage && overlappingCells.length > 0 && (
+              <p className="import-modal__warning">
+                overlaps {overlappingCells.length} existing cell
+                {overlappingCells.length === 1 ? '' : 's'}:{' '}
+                {overlappingCells
+                  .map((c) => {
+                    const range = c.loKey === c.hiKey ? midiToName(c.loKey) : `${midiToName(c.loKey)}–${midiToName(c.hiKey)}`
+                    return `${range} (${c.loVel}-${c.hiVel}, ${c.articulation})`
+                  })
+                  .join(', ')}{' '}
+                - both will sound together
+              </p>
             )}
           </div>
         </div>

@@ -376,6 +376,7 @@ export default function App(): React.JSX.Element {
           sfzFilePath={sfzFilePath}
           workingSfzPath={workingPath}
           existingArticulations={instrument.articulationAxis}
+          cells={instrument.cells}
           onClose={() => setAssigningChunk(null)}
           onAssigned={reparseWorkingCopy}
         />

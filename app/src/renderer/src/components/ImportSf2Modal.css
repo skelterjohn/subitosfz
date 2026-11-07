@@ -168,6 +168,12 @@
   margin: 0;
 }
 
+.import-modal__warning {
+  color: #9a6700;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
 .import-modal__success {
   color: #2a7d2a;
   font-size: 0.85rem;
