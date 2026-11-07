@@ -58,9 +58,9 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
   if (!sfzFilePath) {
     return (
       <div className="import-modal__backdrop" onClick={onClose}>
-        <div className="import-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="import-modal is-compact" onClick={(e) => e.stopPropagation()}>
           <div className="import-modal__header">
-            <h2>import recording</h2>
+            <h2>import audio</h2>
             <button type="button" className="import-modal__close" onClick={onClose} aria-label="Close">
               ×
             </button>
@@ -75,9 +75,9 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
 
   return (
     <div className="import-modal__backdrop" onClick={onClose}>
-      <div className="import-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="import-modal is-compact" onClick={(e) => e.stopPropagation()}>
         <div className="import-modal__header">
-          <h2>import recording</h2>
+          <h2>import audio</h2>
           <button type="button" className="import-modal__close" onClick={onClose} aria-label="Close">
             ×
           </button>
@@ -85,7 +85,7 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
 
         <div className="import-modal__body">
           <section className="import-modal__field">
-            <span className="import-modal__label">recording</span>
+            <span className="import-modal__label">audio</span>
             <div className="import-modal__row">
               <button type="button" onClick={pickFile}>
                 choose file…
@@ -94,19 +94,17 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
             </div>
           </section>
 
-          {sourcePath && (
-            <section className="import-modal__field">
-              <span className="import-modal__label">name</span>
-              <div className="import-modal__row">
-                <input
-                  type="text"
-                  value={baseName}
-                  onChange={(e) => setBaseName(e.target.value)}
-                  placeholder="recording name"
-                />
-              </div>
-            </section>
-          )}
+          <section className="import-modal__field">
+            <span className="import-modal__label">name</span>
+            <div className="import-modal__row">
+              <input
+                type="text"
+                value={baseName}
+                onChange={(e) => setBaseName(e.target.value)}
+                placeholder="sample prefix"
+              />
+            </div>
+          </section>
 
           <div className="import-modal__status">
             {status === 'error' && errorMessage && (

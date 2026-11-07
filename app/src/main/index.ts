@@ -135,7 +135,7 @@ function buildMenu(): Menu {
         click: () => mainWindow?.webContents.send('menu-import')
       },
       {
-        label: 'Import Recording…',
+        label: 'Import Audio…',
         click: () => mainWindow?.webContents.send('menu-import-recording')
       },
       {
@@ -268,7 +268,7 @@ app.whenReady().then(async () => {
     if (!mainWindow) return null
     const dirs = loadImportDirs()
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose a recorded take',
+      title: 'Choose an audio file',
       defaultPath: dirs.lastRecordingDir,
       properties: ['openFile'],
       filters: [{ name: 'WAV audio', extensions: ['wav'] }]

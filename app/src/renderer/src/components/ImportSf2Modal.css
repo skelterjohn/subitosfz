@@ -20,6 +20,14 @@
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
 }
 
+/* For modals with just a couple of short fields (e.g. ImportRecordingModal)
+   rather than a scrollable list - sized to content instead of the fixed
+   560px every other import modal uses, which left a lot of empty space. */
+.import-modal.is-compact {
+  height: auto;
+  max-height: 90vh;
+}
+
 .import-modal__header {
   display: flex;
   align-items: center;
