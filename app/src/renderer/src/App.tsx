@@ -9,6 +9,7 @@ import SampleTakeList from './components/SampleTakeList'
 import {
   emptyInstrument,
   findCellByRegionIndex,
+  findMatchingCell,
   instrumentFromParsedSfz,
   type CellRecord,
   type Instrument,
@@ -200,6 +201,41 @@ export default function App(): React.JSX.Element {
     if (opcodes.some((op) => CELL_AFFECTING_OPCODES.has(op.name))) {
       setLoadGeneration((g) => g + 1)
     }
+  }
+
+  // Removes one region's own <region> block entirely (not just an opcode
+  // edit) - unlike every other mutation here, this is a delete, not an
+  // append (see sfz_write.rs's delete_region). The sample file on disk is
+  // untouched, so the drawer's own scan (a pure filesystem diff against the
+  // instrument's current regions) picks it back up as unassigned on its
+  // own, with no separate signal needed here.
+  //
+  // Always bumps loadGeneration (unlike setRegionOpcode's conditional
+  // bump): removing a region can shrink or remove a whole cell/axis value,
+  // exactly the kind of grouping change that needs the grid's pivot state
+  // reset. regionIndex no longer identifies anything useful afterward (the
+  // deleted one is gone, every later one shifted down), so the previously
+  // selected cell is re-found by its own criteria instead - that keeps the
+  // selection when only one take/region of several was removed, and
+  // cleanly deselects if the whole cell is now gone.
+  async function deleteRegion(regionIndex: number): Promise<void> {
+    if (!workingPath) throw new Error('no instrument is open')
+    const port = await window.api.getServerPort()
+    const res = await fetch(`http://127.0.0.1:${port}/sfz/delete-region`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingSfzPath: workingPath, regionIndex })
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.error ?? `request failed (${res.status})`)
+    }
+    const parsed = (await res.json()) as ParsedSfzResponse
+    const next = instrumentFromParsedSfz(parsed)
+    setInstrument(next)
+    setSelectedCell((current) => (current ? findMatchingCell(next, current) : null))
+    setDirty(true)
+    setLoadGeneration((g) => g + 1)
   }
 
   async function openSfzFile(): Promise<void> {
@@ -416,6 +452,7 @@ export default function App(): React.JSX.Element {
               cell={selectedCell}
               sfzFilePath={sfzFilePath}
               onSetOpcode={setRegionOpcode}
+              onDeleteRegion={deleteRegion}
             />
           </div>
           {/* Absolutely positioned against this column (position: relative

@@ -88,17 +88,23 @@ pub fn append_region(
     sfz_parse::parse(working_sfz_path)
 }
 
-// Byte offset where new text should land within the target region's own
-// span - right before the next <...> header line (mirrors sfz_parse's
-// flush_region, which flushes on ANY header token, not just <region>), or
-// at the end of the file if the target is the last region. A header is
-// only recognized as the first whitespace-separated word of a line (after
-// stripping a trailing `//` comment) - true of everything this app's own
-// writers emit and the common hand-authored convention, but not a full
-// reimplementation of sfz_parse's word-level tokenizer.
-fn region_insertion_offset(text: &str, target_index: usize) -> Result<usize, String> {
+// Byte range [start, end) of exactly region `target_index`'s own span -
+// from the start of its own <region> header line up to (but not including)
+// the next <...> header line (mirrors sfz_parse's flush_region, which
+// flushes on ANY header token, not just <region>), or to the end of the
+// file if it's the last region. A header is only recognized as the first
+// whitespace-separated word of a line (after stripping a trailing `//`
+// comment) - true of everything this app's own writers emit and the common
+// hand-authored convention, but not a full reimplementation of sfz_parse's
+// word-level tokenizer.
+//
+// `end` alone is also "the insertion offset" set_region_opcode/
+// set_cell_opcodes want (append a line right before the next header); the
+// full range is what delete_region needs to remove the region entirely.
+fn region_span(text: &str, target_index: usize) -> Result<(usize, usize), String> {
     let mut region_count = 0usize;
     let mut in_target = false;
+    let mut start = 0usize;
     let mut offset = 0usize;
 
     for line in text.split_inclusive('\n') {
@@ -111,11 +117,12 @@ fn region_insertion_offset(text: &str, target_index: usize) -> Result<usize, Str
 
         if is_header {
             if in_target {
-                return Ok(offset);
+                return Ok((start, offset));
             }
             if first_word == Some("<region>") {
                 if region_count == target_index {
                     in_target = true;
+                    start = offset;
                 }
                 region_count += 1;
             }
@@ -125,13 +132,41 @@ fn region_insertion_offset(text: &str, target_index: usize) -> Result<usize, Str
     }
 
     if in_target {
-        Ok(offset)
+        Ok((start, offset))
     } else {
         let plural = if region_count == 1 { "" } else { "s" };
         Err(format!(
             "region index {target_index} out of range (file has {region_count} region{plural})"
         ))
     }
+}
+
+fn region_insertion_offset(text: &str, target_index: usize) -> Result<usize, String> {
+    region_span(text, target_index).map(|(_, end)| end)
+}
+
+// Removes region `region_index`'s entire span (its own <region> header
+// through just before the next header, or EOF) from the file - the only
+// write operation in this module that deletes rather than appends. The
+// region's sample= file on disk is untouched; it simply becomes an
+// unreferenced .wav again, which the drawer's own unassigned-chunk scan
+// (a filesystem diff, not something tracked here) picks up on its own.
+//
+// Deleting shifts every later region's regionIndex down by one on the next
+// parse - callers that need to keep something else selected after this
+// should re-find it by cell criteria (key/vel range, articulation), not by
+// index.
+pub fn delete_region(working_sfz_path: &Path, region_index: usize) -> Result<ParsedSfz, String> {
+    let text = fs::read_to_string(working_sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
+    let (start, end) = region_span(&text, region_index)?;
+
+    let mut new_text = String::with_capacity(text.len() - (end - start));
+    new_text.push_str(&text[..start]);
+    new_text.push_str(&text[end..]);
+
+    fs::write(working_sfz_path, &new_text).map_err(|e| format!("failed to write sfz file: {e}"))?;
+
+    sfz_parse::parse(working_sfz_path)
 }
 
 // Shared by set_region_opcode and set_cell_opcodes - every opcode name/

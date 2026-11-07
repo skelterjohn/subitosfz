@@ -131,6 +131,23 @@ export function findCellByRegionIndex(instrument: Instrument, regionIndex: numbe
   return null
 }
 
+// Re-finds "the same cell" after an edit that doesn't preserve regionIndex
+// (deleting a region shifts every later one's index down) - matched by the
+// cell's own criteria instead, since those don't change just because some
+// other region elsewhere in the file was removed.
+export function findMatchingCell(instrument: Instrument, criteria: CellRecord): CellRecord | null {
+  return (
+    instrument.cells.find(
+      (c) =>
+        c.loKey === criteria.loKey &&
+        c.hiKey === criteria.hiKey &&
+        c.loVel === criteria.loVel &&
+        c.hiVel === criteria.hiVel &&
+        c.articulation === criteria.articulation
+    ) ?? null
+  )
+}
+
 export function axisValues(instrument: Instrument, axis: Axis): AxisValue[] {
   switch (axis) {
     case 'note':

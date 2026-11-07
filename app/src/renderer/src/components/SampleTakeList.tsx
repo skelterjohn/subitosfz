@@ -6,6 +6,20 @@ interface Props {
   cell: CellRecord | null
   sfzFilePath: string | null
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  onDeleteRegion: (regionIndex: number) => Promise<void>
+}
+
+function TrashIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+      <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+        <line x1="10" y1="11" x2="10" y2="17" />
+        <line x1="14" y1="11" x2="14" y2="17" />
+      </g>
+    </svg>
+  )
 }
 
 interface FlatRegion {
@@ -179,7 +193,12 @@ function regionPan(region: RegionInfo): number {
 // Decoding happens once here (not per-row) so playing a take can fire every
 // one of its regions' already-decoded buffers at the same scheduled start
 // time, instead of re-fetching/re-decoding on click.
-export default function SampleTakeList({ cell, sfzFilePath, onSetOpcode }: Props): React.JSX.Element {
+export default function SampleTakeList({
+  cell,
+  sfzFilePath,
+  onSetOpcode,
+  onDeleteRegion
+}: Props): React.JSX.Element {
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
   // Seconds into each actively-sounding region's own buffer, not a 0..1
   // fraction - see playbackPositionSec for why.
@@ -398,6 +417,7 @@ export default function SampleTakeList({ cell, sfzFilePath, onSetOpcode }: Props
             onPlayRegion={playRegion}
             onPlayTake={playTake}
             onSetOpcode={onSetOpcode}
+            onDeleteRegion={onDeleteRegion}
           />
         ))}
       </div>
@@ -413,6 +433,7 @@ interface TakeItemProps {
   onPlayRegion: (key: string, region: RegionInfo) => void
   onPlayTake: (takeIndex: number, take: TakeInfo, holdSeconds: number) => void
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  onDeleteRegion: (regionIndex: number) => Promise<void>
 }
 
 function TakeItem({
@@ -422,7 +443,8 @@ function TakeItem({
   playheads,
   onPlayRegion,
   onPlayTake,
-  onSetOpcode
+  onSetOpcode,
+  onDeleteRegion
 }: TakeItemProps): React.JSX.Element {
   const [holdSeconds, setHoldSeconds] = useState(DEFAULT_HOLD_SECONDS)
   const anyReady = take.regions.some((region) => {
@@ -457,6 +479,7 @@ function TakeItem({
               playheadPositionSec={playheads[key]}
               onPlay={() => onPlayRegion(key, region)}
               onSetOpcode={onSetOpcode}
+              onDeleteRegion={onDeleteRegion}
             />
           )
         })}
@@ -505,6 +528,7 @@ interface RegionRowProps {
   playheadPositionSec: number | undefined
   onPlay: () => void
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  onDeleteRegion: (regionIndex: number) => Promise<void>
 }
 
 function RegionRow({
@@ -513,9 +537,11 @@ function RegionRow({
   takeMaxDurationSec,
   playheadPositionSec,
   onPlay,
-  onSetOpcode
+  onSetOpcode,
+  onDeleteRegion
 }: RegionRowProps): React.JSX.Element {
   const [opcodesOpen, setOpcodesOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   // Bound to this region, so OpcodeRow/the add-opcode control below only
   // ever need to know a bare (name, value) pair.
   const setOpcode = (name: string, value: string): Promise<void> =>
@@ -523,6 +549,26 @@ function RegionRow({
   const samplePath = region.samplePath
   const fileName = samplePath.split(/[/\\]/).pop() ?? samplePath
   const isReady = state?.status === 'ready'
+
+  // Removes this region only - a different region that happens to overlap
+  // the same cell (see InstrumentGrid's overlap handling) is untouched,
+  // since deletion targets one region's own regionIndex, not the cell as a
+  // whole. Irreversible (like the drawer's delete-from-disk), so confirmed
+  // the same way - this row unmounts on success as the region disappears
+  // from `cell.samples`, so there's no "done" state to reset afterward.
+  async function handleDelete(): Promise<void> {
+    if (deleting) return
+    if (!window.confirm(`Delete this region ("${fileName}") from the instrument? This can't be undone.`)) {
+      return
+    }
+    setDeleting(true)
+    try {
+      await onDeleteRegion(region.regionIndex)
+    } catch (err) {
+      window.alert(`Failed to delete region: ${String(err)}`)
+      setDeleting(false)
+    }
+  }
   // Pulled out into their own section regardless of global/local status (in
   // practice always local - these are what make one region selection-
   // distinct from another, so they're almost never inherited) rather than
@@ -571,18 +617,30 @@ function RegionRow({
       </div>
       {opcodesOpen && (
         <div className="sample-take-list__opcodes">
-          {/* This region's own play button - only reachable once unfolded,
-              since the folded row relies on the take's single combined
-              button instead. */}
-          <button
-            type="button"
-            className="sample-take-list__play"
-            onClick={onPlay}
-            disabled={!isReady}
-            aria-label="Play this sample"
-          >
-            ▶
-          </button>
+          {/* This region's own play/delete controls - only reachable once
+              unfolded, since the folded row relies on the take's single
+              combined play button instead. */}
+          <div className="sample-take-list__region-actions">
+            <button
+              type="button"
+              className="sample-take-list__play"
+              onClick={onPlay}
+              disabled={!isReady}
+              aria-label="Play this sample"
+            >
+              ▶
+            </button>
+            <button
+              type="button"
+              className="sample-take-list__delete-region"
+              onClick={handleDelete}
+              disabled={deleting}
+              aria-label="Delete this region"
+              title="Delete this region"
+            >
+              <TrashIcon />
+            </button>
+          </div>
           {/* Globals first (per the backend's own ordering), then this
               region's own cell-defining criteria (what note/velocity/
               articulation it's gated on), both set off with a vertical rail

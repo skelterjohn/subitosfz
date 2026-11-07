@@ -317,6 +317,11 @@
   color: #555;
 }
 
+.sample-take-list__region-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
 .sample-take-list__play {
   flex-shrink: 0;
   cursor: pointer;
@@ -335,6 +340,29 @@
 }
 
 .sample-take-list__play:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sample-take-list__delete-region {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid #ccc;
+  background: crimson;
+  color: white;
+}
+
+.sample-take-list__delete-region:hover:not(:disabled) {
+  background: #a40033;
+}
+
+.sample-take-list__delete-region:disabled {
   opacity: 0.5;
   cursor: default;
 }

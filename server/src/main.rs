@@ -194,6 +194,22 @@ async fn set_cell_opcodes_handler(
 }
 
 #[derive(Deserialize)]
+struct DeleteRegionRequest {
+    #[serde(rename = "workingSfzPath")]
+    working_sfz_path: String,
+    #[serde(rename = "regionIndex")]
+    region_index: usize,
+}
+
+async fn delete_region_handler(
+    Json(req): Json<DeleteRegionRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::delete_region(&PathBuf::from(req.working_sfz_path), req.region_index)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
 struct OpenRequest {
     #[serde(rename = "originalPath")]
     original_path: String,
@@ -238,6 +254,7 @@ async fn main() {
         .route("/sfz/add-region", post(add_region_handler))
         .route("/sfz/set-opcode", post(set_opcode_handler))
         .route("/sfz/set-cell-opcodes", post(set_cell_opcodes_handler))
+        .route("/sfz/delete-region", post(delete_region_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
