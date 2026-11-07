@@ -320,28 +320,6 @@ fn chord_direct_mark(chord: roxmltree::Node, mapping: &HashMap<String, String>) 
     None
 }
 
-// End offset of this node's last element child - where to insert a new
-// last child, right before the node's own closing tag.
-fn last_child_end(node: roxmltree::Node) -> usize {
-    node.children()
-        .filter(|n| n.is_element())
-        .last()
-        .map(|n| n.range().end)
-        .unwrap_or_else(|| node.range().end)
-}
-
-// Right after <tpc> (or <pitch> if no tpc) - matches the element order a
-// real MuseScore-written Note uses (eid, visible, pitch, tpc, play,
-// fret, string - confirmed by hand-editing a test file and diffing),
-// rather than blindly appending as the last child regardless of order.
-fn mute_insertion_offset(note: roxmltree::Node) -> usize {
-    note.children()
-        .find(|n| n.has_tag_name("tpc"))
-        .or_else(|| note.children().find(|n| n.has_tag_name("pitch")))
-        .map(|n| n.range().end)
-        .unwrap_or_else(|| last_child_end(note))
-}
-
 // Standard MuseScore tonal-pitch-class value per chroma (C=0..B=11) -
 // confirmed against a real file (pitch 59 / B -> tpc 19, index 11 here).
 // Only used for hidden keyswitch notes, so any valid spelling is fine.
@@ -441,6 +419,26 @@ fn max_element_value(doc: &roxmltree::Document, tag: &str) -> u32 {
 // replicate a measure's timing on the mirrored keyswitch staff, with no
 // parsing/reformatting risk. Tuplets aren't specially handled - an
 // accepted v1 limitation (not exercised by any score tested so far).
+// Swaps in a fresh eid for a verbatim-copied element's own <eid>...</eid>,
+// since copying TimeSig/KeySig/Dynamic XML as-is onto the hidden staff
+// would otherwise duplicate the eid already present on the real staff's
+// copy of the same element - confirmed to crash MuseScore on load (eid
+// is a global uniqueness key, not scoped per-staff).
+fn with_fresh_eid(xml: &str) -> String {
+    if let Some(start) = xml.find("<eid>") {
+        let after_tag = start + "<eid>".len();
+        if let Some(end_rel) = xml[after_tag..].find("</eid>") {
+            let end = after_tag + end_rel;
+            let mut out = String::with_capacity(xml.len());
+            out.push_str(&xml[..after_tag]);
+            out.push_str(&random_eid());
+            out.push_str(&xml[end..]);
+            return out;
+        }
+    }
+    xml.to_string()
+}
+
 fn duration_xml(node: roxmltree::Node, source: &str) -> String {
     let mut out = String::new();
     if let Some(dt) = node.children().find(|n| n.has_tag_name("durationType")) {
@@ -452,12 +450,40 @@ fn duration_xml(node: roxmltree::Node, source: &str) -> String {
     out
 }
 
-// Result of injecting keyswitches: the new .mscx text, plus the partIds
-// of any newly-created hidden keyswitch staves (apply() still needs to
-// give each of these its own audiosettings.json track entry).
+// Fresh <Note> elements (new eid each, not the original's) carrying just
+// pitch+tpc from a real Chord's own notes - used to copy the actual
+// performance onto the hidden keyswitch staff alongside the switch note.
+// A new eid rather than copying the source Note's own XML verbatim,
+// since reusing an eid that already exists elsewhere in the file (on the
+// real, visible note) risks a duplicate-id problem.
+fn chord_notes_xml(chord: roxmltree::Node) -> String {
+    let mut out = String::new();
+    for note in chord.children().filter(|n| n.has_tag_name("Note")) {
+        let pitch = note
+            .children()
+            .find(|n| n.has_tag_name("pitch"))
+            .and_then(element_text)
+            .unwrap_or("60");
+        let tpc = note
+            .children()
+            .find(|n| n.has_tag_name("tpc"))
+            .and_then(element_text)
+            .unwrap_or("14");
+        out.push_str(&format!("<Note><eid>{}</eid><pitch>{pitch}</pitch><tpc>{tpc}</tpc></Note>", random_eid()));
+    }
+    out
+}
+
+// Result of injecting keyswitches: the new .mscx text, plus (partId,
+// Instrument id) for each newly-created hidden keyswitch staff - apply()
+// needs both to give each one its own audiosettings.json track entry,
+// keyed by the SAME Instrument id as the one actually written into the
+// mscx (confirmed by hand to be the real lookup key MuseScore's Mixer
+// uses to bind a sound to a track - not partId, which is present but
+// apparently just carried-along metadata).
 struct InjectResult {
     mscx_text: String,
-    new_part_ids: Vec<String>,
+    new_parts: Vec<(String, String)>,
 }
 
 // Builds one dedicated, hidden keyswitch staff per selected part, rather
@@ -474,21 +500,19 @@ struct InjectResult {
 // apparently more fundamental mechanism than hiding an element within an
 // existing one.
 //
-// IMPORTANT UNVERIFIED RISK: each MuseScore Part is its own independent
-// Mixer track with (as far as everything inspected this session shows)
-// its own independently-instantiated plugin. The keyswitch mechanism
-// depends on the switch note and the real note landing in the SAME
-// sfizz instance's internal "last switch" state - that's exactly why
-// same-staff injection worked. Moving the switch note to a separate Part
-// means it's a separate Mixer track, which may mean a separate sfizz
-// instance entirely - in which case triggering a switch there would have
-// NO effect on the real track's own instance, silently breaking the
-// thing already confirmed working by ear. apply() gives the new part the
-// exact same sfizz+derived-sfz assignment as the real part as a
-// best-effort attempt, but this is NOT the same as confirming MuseScore
-// actually shares - or can share - one plugin instance across Parts.
-// This needs a real listening test before being trusted, not just the
-// structural/visual verification this module can do on its own.
+// A second problem surfaced once the hidden staff became its own
+// separate Part: giving it the exact same sfizz plugin assignment as the
+// real part doesn't make them share internal keyswitch state - confirmed
+// by hand that it instead silences the real part's own audio entirely
+// (two Parts = two independent plugin instances, and identical config
+// across them breaks rather than shares). The fix: this hidden staff now
+// carries the FULL performance, not just switch blips - a fresh copy of
+// every real note (see chord_notes_xml), stacked together with the
+// switch note in the same chord, same as the original same-staff design
+// that was confirmed working by ear. The real/visible staff is left
+// completely unmodified and muted at the Mixer level instead (see
+// apply()) - the switch and the sound it affects now share one plugin
+// instance again, just on a staff nobody sees rather than the real one.
 fn inject_keyswitches(
     mscx_text: &str,
     part_ids: &[String],
@@ -503,7 +527,7 @@ fn inject_keyswitches(
     // and applied back-to-front - same discipline sfz_write.rs uses. A
     // pure insertion is a zero-width range (offset..offset).
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
-    let mut new_part_ids: Vec<String> = Vec::new();
+    let mut new_parts: Vec<(String, String)> = Vec::new();
 
     remove_previous_keyswitch_staves(&doc, &mut edits);
 
@@ -518,6 +542,19 @@ fn inject_keyswitches(
     let mut next_part_id = max_attr_value(&doc, "Part", "id") + 1;
     let mut next_staff_id = max_attr_value(&doc, "Staff", "id") + 1;
     let mut next_midi_channel = max_element_value(&doc, "midiChannel") + 1;
+
+    // Grouped at the end: every new Part/Staff is appended together after
+    // the last existing one, not interleaved right after each
+    // corresponding real target. Confirmed by direct A/B comparison on
+    // clean files (no pre-existing cruft) that grouped-at-the-end lays
+    // out correctly (real staves' order is left completely undisturbed,
+    // the one thing already known to work) while interleaving does not
+    // (tried twice, on two different clean files, same cross-wired
+    // result both times) - an earlier read of a user report seemed to
+    // argue FOR interleaving by a positional-index argument, but that
+    // turned out to be a misanalysis; empirical A/B testing overrides it.
+    let mut all_new_parts_xml = String::new();
+    let mut all_new_staves_xml = String::new();
 
     for part in doc.descendants().filter(|n| n.has_tag_name("Part")) {
         let Some(part_id_str) = part.attribute("id") else { continue };
@@ -544,9 +581,18 @@ fn inject_keyswitches(
         next_part_id += 1;
         next_staff_id += 1;
         next_midi_channel += 2;
-        new_part_ids.push(new_part_id.to_string());
 
+        // Suffixed with new_part_id below (not used bare) - all three real
+        // guitars here share the SAME underlying instrument_id
+        // ("guitar-nylon"), and giving every synthetic keyswitch
+        // Instrument that identical id too (confirmed by hand: this was
+        // the actual bug behind content appearing to cross-wire between
+        // staves, independent of how Part/Staff document order was
+        // arranged - MuseScore evidently treats Instrument id as more
+        // than a label).
         let instrument_id = instrument.attribute("id").unwrap_or("instrument");
+        let mscx_instrument_id = format!("{KEYSWITCH_EID_PREFIX}{instrument_id}-{new_part_id}");
+        new_parts.push((new_part_id.to_string(), mscx_instrument_id.clone()));
         let long_name = instrument
             .children()
             .find(|n| n.has_tag_name("longName"))
@@ -596,7 +642,7 @@ fn inject_keyswitches(
 </Staff>\
 <show>0</show>\
 <trackName>{track_name}</trackName>\
-<Instrument id=\"{KEYSWITCH_EID_PREFIX}{instrument_id}\">\
+<Instrument id=\"{mscx_instrument_id}\">\
 <longName>{long_name} - subito keyswitches</longName>\
 <shortName>{long_name} - subito keyswitches</shortName>\
 <trackName>{track_name}</trackName>\
@@ -611,7 +657,7 @@ fn inject_keyswitches(
 </Part>\n",
             random_eid()
         );
-        edits.push((part.range().end..part.range().end, new_part_xml));
+        all_new_parts_xml.push_str(&new_part_xml);
 
         // One pass over the real staff's rhythm, both collecting mute
         // edits for the real notes (NONE_SENTINEL case, unchanged from
@@ -625,8 +671,18 @@ fn inject_keyswitches(
             staff_body.push_str("<Measure><voice>");
             if let Some(voice) = measure.children().find(|n| n.has_tag_name("voice")) {
                 for child in voice.children().filter(|n| n.is_element()) {
-                    if child.has_tag_name("TimeSig") || child.has_tag_name("KeySig") {
-                        staff_body.push_str(&mscx_text[child.range()]);
+                    // TimeSig/KeySig keep the hidden staff's own measure
+                    // durations correct; Dynamic is copied too since this
+                    // staff now carries the actual audible performance
+                    // (not just switch blips) - MuseScore computes note
+                    // velocity from the nearest preceding Dynamic itself,
+                    // so copying the marking is enough, no manual
+                    // velocity computation needed here. Hairpins/ties
+                    // aren't specially handled - accepted v1 limitation,
+                    // not attempted (gradual dynamics and sustained ties
+                    // may not reproduce exactly on this hidden copy).
+                    if child.has_tag_name("TimeSig") || child.has_tag_name("KeySig") || child.has_tag_name("Dynamic") {
+                        staff_body.push_str(&with_fresh_eid(&mscx_text[child.range()]));
                         continue;
                     }
                     if child.has_tag_name("StaffText") || child.has_tag_name("PlayTechAnnotation") {
@@ -657,7 +713,7 @@ fn inject_keyswitches(
                         continue;
                     }
                     if !child.has_tag_name("Chord") {
-                        continue; // Dynamic, Tempo, Spanner, Fingering, Articulation - irrelevant here
+                        continue; // Tempo, Spanner, Fingering, Articulation - irrelevant here
                     }
 
                     let resolved = chord_direct_mark(child, mark_mapping)
@@ -667,10 +723,10 @@ fn inject_keyswitches(
                     let duration = duration_xml(child, mscx_text);
 
                     if resolved == NONE_SENTINEL {
-                        for note in child.children().filter(|n| n.has_tag_name("Note")) {
-                            let offset = mute_insertion_offset(note);
-                            edits.push((offset..offset, "<play>0</play>\n".to_string()));
-                        }
+                        // The real staff is muted at the Mixer level (see
+                        // apply()), so there's nothing to silence there
+                        // anymore - this chord just contributes no sound
+                        // at all on the hidden (audible) staff either.
                         staff_body.push_str(&format!("<Rest><eid>{}</eid>{duration}</Rest>", random_eid()));
                         continue;
                     }
@@ -679,10 +735,17 @@ fn inject_keyswitches(
                         return Err(format!("no reserved keyswitch note for articulation \"{resolved}\""));
                     };
                     let tpc = TPC_BY_CHROMA[(note_number % 12) as usize];
+                    // This chord carries BOTH the keyswitch trigger AND a
+                    // fresh copy of the real note(s) - the switch and the
+                    // sound it affects now live in the same chord, on the
+                    // same staff/plugin instance, exactly like the
+                    // original same-staff design that was confirmed
+                    // working by ear - just moved to a staff nobody sees.
                     staff_body.push_str(&format!(
-                        "<Chord><eid>{}</eid>{duration}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note></Chord>",
+                        "<Chord><eid>{}</eid>{duration}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note>{}</Chord>",
                         random_eid(),
-                        random_eid()
+                        random_eid(),
+                        chord_notes_xml(child)
                     ));
                 }
             }
@@ -690,7 +753,24 @@ fn inject_keyswitches(
         }
 
         let new_staff_xml = format!("<Staff id=\"{new_staff_id}\">{staff_body}</Staff>\n");
-        edits.push((real_staff.range().end..real_staff.range().end, new_staff_xml));
+        all_new_staves_xml.push_str(&new_staff_xml);
+    }
+
+    if !all_new_parts_xml.is_empty() {
+        if let Some(last_part) = doc.descendants().filter(|n| n.has_tag_name("Part")).last() {
+            let offset = last_part.range().end;
+            edits.push((offset..offset, all_new_parts_xml));
+        }
+    }
+    if !all_new_staves_xml.is_empty() {
+        if let Some(last_staff) = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("Staff") && n.attribute("id").is_some())
+            .last()
+        {
+            let offset = last_staff.range().end;
+            edits.push((offset..offset, all_new_staves_xml));
+        }
     }
 
     // Descending by start, so each splice doesn't invalidate the offsets
@@ -702,7 +782,7 @@ fn inject_keyswitches(
     for (range, replacement) in edits {
         new_text.replace_range(range, &replacement);
     }
-    Ok(InjectResult { mscx_text: new_text, new_part_ids })
+    Ok(InjectResult { mscx_text: new_text, new_parts })
 }
 
 // Everything that makes this "is it actually a MuseScore 4 file" - its
@@ -912,6 +992,15 @@ pub fn apply(
             .is_some_and(|id| id.starts_with(KEYSWITCH_EID_PREFIX))
     });
 
+    // The real/visible track is muted, not silenced note-by-note - the
+    // hidden keyswitch staff now carries a full copy of the actual
+    // performance (see inject_keyswitches), so the real track would just
+    // double every note otherwise. Confirmed necessary: two Parts given
+    // identical sfizz plugin state do NOT share internal switch state -
+    // attempting that actually silenced the real part's own audio
+    // entirely. Muting the real track and making the hidden one the sole
+    // audible source sidesteps the cross-instance problem rather than
+    // solving it.
     let mut applied = 0usize;
     for track in tracks.iter_mut() {
         let part_id = track
@@ -924,21 +1013,51 @@ pub fn apply(
         }
         if let Some(obj) = track.as_object_mut() {
             obj.insert("in".to_string(), sfizz_in.clone());
+            obj.insert(
+                "soloMuteState".to_string(),
+                serde_json::json!({ "mute": true, "solo": false })
+            );
         }
         applied += 1;
     }
 
     // Give each new hidden keyswitch staff its OWN Mixer track entry,
-    // pointed at the exact same sfizz+derived-sfz assignment as the real
-    // part it switches - see inject_keyswitches' own doc comment for why
-    // this is a best-effort attempt, not a confirmed-working mechanism:
-    // whether MuseScore actually shares one plugin instance's internal
-    // keyswitch state across two different Parts is unverified.
-    for new_part_id in &inject_result.new_part_ids {
-        tracks.push(serde_json::json!({
+    // pointed at the SAME sfizz+derived-sfz assignment - its own separate
+    // plugin instance is fine here, since this staff's own content
+    // contains everything it needs (switch + real notes together), with
+    // no dependency on sharing state with the muted real track.
+    //
+    // instrumentId here MUST match the Instrument id actually written
+    // into the mscx (mscx_instrument_id from inject_keyswitches) -
+    // confirmed by hand that this, not partId, is what MuseScore's Mixer
+    // uses to bind a track entry to a score instrument: manually
+    // assigning a sound via the Mixer to one of these staves made
+    // MuseScore create a brand new track entry keyed by that exact
+    // Instrument id, leaving our old entry (which used a different,
+    // made-up instrumentId string) untouched and unused - which is
+    // exactly why these staves fell back to MS Basic before this fix.
+    // auxSends mirrors the real tracks' own reverb send, since this
+    // staff is now the one actually heard.
+    //
+    // Inserted before the metronome's track entry, not appended at the
+    // very end - the metronome has no <Part> of its own in the mscx
+    // (it's a Mixer-only channel MuseScore appends programmatically
+    // after every real document Part), so appending straight onto the
+    // end would leave this array's order one group out of step with the
+    // actual Part order.
+    let insert_at = tracks
+        .iter()
+        .position(|t| t.get("instrumentId").and_then(Value::as_str) == Some("metronome"))
+        .unwrap_or(tracks.len());
+    for (offset, (new_part_id, mscx_instrument_id)) in inject_result.new_parts.iter().enumerate() {
+        tracks.insert(insert_at + offset, serde_json::json!({
             "in": sfizz_in,
-            "instrumentId": format!("{KEYSWITCH_EID_PREFIX}keyswitches"),
+            "instrumentId": mscx_instrument_id,
             "out": {
+                "auxSends": [
+                    { "active": true, "signalAmount": 0.30000001192092896 },
+                    { "active": true, "signalAmount": 0.30000001192092896 }
+                ],
                 "balance": 0,
                 "fxChain": {},
                 "volumeDb": 0
