@@ -329,13 +329,29 @@ export default function InstrumentGrid({
                 : `${displayRows[block.rowStart]?.label}–${displayRows[block.rowEnd]?.label}`
             const isOverlap = block.matches.length > 1
             const cell = block.matches[0]
-            const isSelected = !isOverlap && cell === selectedCell
+            // For an overlap block, any of its matches counts as "selected" -
+            // there's no single cell to compare against. Clicking cycles to
+            // the next one (see handleClick below), rather than always
+            // landing on matches[0] with no way to reach the others.
+            const isSelected = isOverlap
+              ? selectedCell !== null && block.matches.includes(selectedCell)
+              : cell === selectedCell
+
+            function handleClick(): void {
+              if (!isOverlap) {
+                onSelectCell(cell)
+                return
+              }
+              const currentIndex = selectedCell ? block.matches.indexOf(selectedCell) : -1
+              onSelectCell(block.matches[(currentIndex + 1) % block.matches.length])
+            }
+
             return (
               <div
                 key={i}
                 className={
                   isOverlap
-                    ? 'instrument-grid__cell is-overlap'
+                    ? `instrument-grid__cell is-overlap${isSelected ? ' is-selected' : ''}`
                     : `instrument-grid__cell is-filled${isSelected ? ' is-selected' : ''}`
                 }
                 style={{
@@ -344,10 +360,10 @@ export default function InstrumentGrid({
                 }}
                 title={
                   isOverlap
-                    ? `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - ${block.matches.length} overlapping sounds claim this range`
+                    ? `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - ${block.matches.length} overlapping sounds claim this range - click to cycle through them`
                     : `${rowLabel} / ${displayCols[block.colIndex]?.label} / ${AXIS_LABEL[layout.fixed]}: ${fixedLabel} - anchor ${midiToName(Number(cell.note))} - click to select`
                 }
-                onClick={() => onSelectCell(cell)}
+                onClick={handleClick}
               >
                 {isOverlap ? (
                   <span className="instrument-grid__cell-count">!</span>
