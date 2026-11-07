@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { createHash } from 'node:crypto'
@@ -255,8 +255,13 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('list-directory', async (_event, sfzFilePath: string) => {
     const dirPath = dirname(sfzFilePath)
-    const entries = await readdir(dirPath, { withFileTypes: true })
-    return entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+    // Recursive - long-take chunks now live in a per-import subdirectory
+    // (see chunk.rs), and the drawer's unassigned-chunk diff needs to see
+    // .wav files at any depth under the project root, not just top-level.
+    const entries = await readdir(dirPath, { withFileTypes: true, recursive: true })
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => relative(dirPath, join(entry.parentPath, entry.name)).replace(/\\/g, '/'))
   })
 
   ipcMain.handle('choose-audio-file', async () => {
