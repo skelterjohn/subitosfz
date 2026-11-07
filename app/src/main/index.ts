@@ -131,6 +131,11 @@ function buildMenu(): Menu {
     label: 'File',
     submenu: [
       {
+        label: 'New…',
+        accelerator: 'CmdOrCtrl+N',
+        click: () => mainWindow?.webContents.send('menu-new')
+      },
+      {
         label: 'Import SF2/SF3…',
         click: () => mainWindow?.webContents.send('menu-import')
       },

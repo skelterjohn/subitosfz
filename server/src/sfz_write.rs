@@ -37,6 +37,23 @@ pub fn save(working_path: &Path, original_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// Creates a brand-new, empty .sfz file in an existing directory - "New" in
+// the File menu. Never overwrites: an existing file at the target path is
+// left untouched and reported as an error, since silently clobbering
+// whatever's already there would be a much worse surprise than just asking
+// for a different name. Returns the new file's path so the caller can open
+// it the normal way (App.tsx's loadSfzFile) rather than this needing to
+// know anything about working copies itself.
+pub fn create_new(dest_dir: &Path, file_name: &str) -> Result<String, String> {
+    let safe_name = crate::sf2::sanitize_filename(file_name);
+    let sfz_path = dest_dir.join(format!("{safe_name}.sfz"));
+    if sfz_path.exists() {
+        return Err(format!("a file already exists at {}", sfz_path.display()));
+    }
+    fs::write(&sfz_path, "").map_err(|e| format!("failed to create file: {e}"))?;
+    Ok(sfz_path.to_string_lossy().to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn append_region(
     working_sfz_path: &Path,

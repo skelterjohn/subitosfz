@@ -19,6 +19,7 @@ declare global {
       listDirectory: (sfzFilePath: string) => Promise<string[]>
       deleteSampleFile: (sfzFilePath: string, relativeSamplePath: string) => Promise<void>
       chooseAudioFile: () => Promise<string | null>
+      onMenuNew: (callback: () => void) => () => void
       onMenuImport: (callback: () => void) => () => void
       onMenuImportRecording: (callback: () => void) => () => void
       onMenuOpen: (callback: () => void) => () => void

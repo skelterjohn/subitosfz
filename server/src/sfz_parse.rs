@@ -285,9 +285,11 @@ pub fn parse(path: &Path) -> Result<ParsedSfz, String> {
     }
     flush_region(&mut region, &global, &master, &group, &mut raw_regions);
 
-    if raw_regions.is_empty() {
-        return Err("no regions found in file".to_string());
-    }
+    // Zero regions is a valid, legitimate state - a freshly created "New"
+    // file (see sfz_write.rs's create_new) or a project whose last region
+    // was just deleted (delete_region) - not an error. InstrumentGrid
+    // already renders an explicit "no instrument loaded" message for an
+    // empty ParsedSfz, so there's nothing silently confusing about it.
 
     // First pass: the note axis is the full playable range (lowest lokey to
     // highest hikey across every region), and we collect the distinct

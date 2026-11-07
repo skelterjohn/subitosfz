@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import InstrumentGrid from './components/InstrumentGrid'
+import NewInstrumentModal from './components/NewInstrumentModal'
 import ImportSf2Modal from './components/ImportSf2Modal'
 import ImportRecordingModal from './components/ImportRecordingModal'
 import AssignChunkModal from './components/AssignChunkModal'
@@ -48,6 +49,7 @@ export default function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [startupMs, setStartupMs] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [newInstrumentOpen, setNewInstrumentOpen] = useState(false)
   const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
   const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
@@ -258,6 +260,19 @@ export default function App(): React.JSX.Element {
     await loadSfzFile(sfzFilePath)
   }
 
+  // Gate in front of the New modal: creating a new instrument discards
+  // whatever's currently open the same way Discard Changes does (loadSfzFile
+  // replaces sfzFilePath/workingPath/instrument wholesale), so it needs the
+  // same warning first if there's anything unsaved to lose. The modal itself
+  // only handles picking a destination folder/name - this is just the
+  // "is it safe to open the picker" check in front of it.
+  function requestNewInstrument(): void {
+    if (dirty && !window.confirm('Creating a new instrument will discard your unsaved changes. Continue?')) {
+      return
+    }
+    setNewInstrumentOpen(true)
+  }
+
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
   useEffect(() => {
@@ -295,6 +310,9 @@ export default function App(): React.JSX.Element {
   // later edit flip dirty to true.
   useEffect(() => {
     if (!window.api) return
+    const offNew = window.api.onMenuNew(() => {
+      requestNewInstrument()
+    })
     const offImport = window.api.onMenuImport(() => setImportOpen(true))
     const offImportRecording = window.api.onMenuImportRecording(() => setImportRecordingOpen(true))
     const offOpen = window.api.onMenuOpen(() => {
@@ -310,6 +328,7 @@ export default function App(): React.JSX.Element {
       discardChanges()
     })
     return () => {
+      offNew()
       offImport()
       offImportRecording()
       offOpen()
@@ -416,6 +435,12 @@ export default function App(): React.JSX.Element {
         </div>
       )}
 
+      {newInstrumentOpen && (
+        <NewInstrumentModal
+          onClose={() => setNewInstrumentOpen(false)}
+          onCreated={(path) => loadSfzFile(path)}
+        />
+      )}
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
       {importRecordingOpen && (
         <ImportRecordingModal

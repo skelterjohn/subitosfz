@@ -218,6 +218,28 @@ async fn delete_region_handler(
 }
 
 #[derive(Deserialize)]
+struct CreateNewRequest {
+    #[serde(rename = "destDir")]
+    dest_dir: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
+}
+
+#[derive(Serialize)]
+struct CreateNewResponse {
+    #[serde(rename = "sfzPath")]
+    sfz_path: String,
+}
+
+async fn create_new_handler(
+    Json(req): Json<CreateNewRequest>,
+) -> Result<Json<CreateNewResponse>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::create_new(&PathBuf::from(req.dest_dir), &req.file_name)
+        .map(|sfz_path| Json(CreateNewResponse { sfz_path }))
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
 struct OpenRequest {
     #[serde(rename = "originalPath")]
     original_path: String,
@@ -256,6 +278,7 @@ async fn main() {
         .route("/sf2/presets", post(sf2_presets))
         .route("/sf2/export", post(sf2_export))
         .route("/sfz/parse", post(sfz_parse_handler))
+        .route("/sfz/new", post(create_new_handler))
         .route("/sfz/open", post(open_handler))
         .route("/sfz/save", post(save_handler))
         .route("/audio/chunk", post(chunk_handler))
