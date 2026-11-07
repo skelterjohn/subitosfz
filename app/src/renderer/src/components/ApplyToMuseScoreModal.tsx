@@ -45,6 +45,11 @@ const ARTICULATION_KIND_LABELS: Record<ArticulationKind, string> = {
   text: 'text markings'
 }
 const ARTICULATION_KIND_ORDER: ArticulationKind[] = ['notehead', 'symbol', 'text']
+// Distinct from the empty-string "use the default" sentinel below - this
+// one means "explicitly give this mark no articulation at all", not
+// "inherit whatever the default is". Matches AssignChunkModal's own
+// `__sentinel__` convention for values that aren't real articulation ids.
+const NONE_SENTINEL = '__none__'
 
 interface Props {
   sfzFilePath: string
@@ -62,10 +67,15 @@ export default function ApplyToMuseScoreModal({
   const [museScorePath, setMuseScorePath] = useState<string | null>(null)
   const [info, setInfo] = useState<MuseScoreInfo | null>(null)
   const [selectedPartIds, setSelectedPartIds] = useState<Set<string>>(new Set())
-  // Keyed by `${kind}:${id}` -> the chosen sfz articulation id, or '' for
-  // unmapped (the default - leaving most marks blank is expected). Purely
-  // UI state for now: there's no backend support yet for actually acting
-  // on a mapping (injecting keyswitch notes), so Apply doesn't send this.
+  // What a plain, otherwise-unmarked note gets - and also what any found
+  // mark falls back to when its own mapping is left at '' ("default").
+  // '' means no default is set at all (unspecified notes get nothing).
+  const [defaultArticulationId, setDefaultArticulationId] = useState('')
+  // Keyed by `${kind}:${id}` -> '' to inherit defaultArticulationId above,
+  // NONE_SENTINEL to explicitly silence this mark instead, or a real sfz
+  // articulation id to override the default just for this mark. Purely UI
+  // state for now: there's no backend support yet for actually acting on a
+  // mapping (injecting keyswitch notes), so Apply doesn't send any of this.
   const [articulationMapping, setArticulationMapping] = useState<Record<string, string>>({})
   const [status, setStatus] = useState<Status>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -78,6 +88,7 @@ export default function ApplyToMuseScoreModal({
     setMuseScorePath(path)
     setInfo(null)
     setSelectedPartIds(new Set())
+    setDefaultArticulationId('')
     setArticulationMapping({})
     setResult(null)
     setErrorMessage(null)
@@ -196,6 +207,29 @@ export default function ApplyToMuseScoreModal({
           )}
 
           {info && (status === 'ready' || status === 'applying' || status === 'done') && (
+            <section className="import-modal__field">
+              <span className="import-modal__label">default articulation</span>
+              <div className="import-modal__row">
+                <select
+                  value={defaultArticulationId}
+                  disabled={status === 'applying' || status === 'done'}
+                  onChange={(e) => setDefaultArticulationId(e.target.value)}
+                >
+                  <option value="">— none —</option>
+                  {existingArticulations.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="import-modal__path">
+                  applies to any plain note, and to any mark below left at &quot;— default —&quot;
+                </span>
+              </div>
+            </section>
+          )}
+
+          {info && (status === 'ready' || status === 'applying' || status === 'done') && (
             <section className="import-modal__field is-grow">
               <span className="import-modal__label">articulations found</span>
               {info.articulations.length === 0 && (
@@ -226,12 +260,13 @@ export default function ApplyToMuseScoreModal({
                                   setArticulationMapping((cur) => ({ ...cur, [key]: e.target.value }))
                                 }
                               >
-                                <option value="">— none —</option>
+                                <option value="">— default —</option>
                                 {existingArticulations.map((a) => (
                                   <option key={a.id} value={a.id}>
                                     {a.label}
                                   </option>
                                 ))}
+                                <option value={NONE_SENTINEL}>— none —</option>
                               </select>
                             </div>
                           )
