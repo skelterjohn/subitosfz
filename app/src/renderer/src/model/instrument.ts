@@ -139,6 +139,29 @@ export function findCellByRegionIndex(instrument: Instrument, regionIndex: numbe
   return null
 }
 
+// Finds the cell containing whichever region has the highest regionIndex in
+// the whole file - a freshly appended region (see sfz_write.rs's
+// append_region) always lands at EOF, so it always ends up with a strictly
+// higher index than every region that existed before it. Used to select the
+// cell a brand-new region just landed in (whether that's a new cell or an
+// existing one it was added alongside) without the caller needing to know
+// its exact index up front.
+export function findCellWithHighestRegionIndex(instrument: Instrument): CellRecord | null {
+  let best: CellRecord | null = null
+  let bestIndex = -1
+  for (const cell of instrument.cells) {
+    for (const take of cell.samples) {
+      for (const region of take.regions) {
+        if (region.regionIndex > bestIndex) {
+          bestIndex = region.regionIndex
+          best = cell
+        }
+      }
+    }
+  }
+  return best
+}
+
 // Re-finds "the same cell" after an edit that doesn't preserve regionIndex
 // (deleting a region shifts every later one's index down) - matched by the
 // cell's own criteria instead, since those don't change just because some

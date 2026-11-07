@@ -9,6 +9,7 @@ import SampleTakeList from './components/SampleTakeList'
 import {
   emptyInstrument,
   findCellByRegionIndex,
+  findCellWithHighestRegionIndex,
   findMatchingCell,
   instrumentFromParsedSfz,
   type CellRecord,
@@ -325,7 +326,9 @@ export default function App(): React.JSX.Element {
   // Re-parses the working copy in place (no fresh copy from the original,
   // unlike loadSfzFile - used after a mutation that already landed on the
   // working copy itself, like assigning a drawer sample, so it picks up
-  // the change without discarding any other not-yet-saved edits).
+  // the change without discarding any other not-yet-saved edits). Selects
+  // whichever cell the newly appended region landed in (new or existing),
+  // so the sample panel shows it immediately instead of going blank.
   async function reparseWorkingCopy(): Promise<void> {
     if (!workingPath) return
     try {
@@ -340,8 +343,9 @@ export default function App(): React.JSX.Element {
         throw new Error(body?.error ?? `request failed (${res.status})`)
       }
       const parsed = (await res.json()) as ParsedSfzResponse
-      setInstrument(instrumentFromParsedSfz(parsed))
-      setSelectedCell(null)
+      const next = instrumentFromParsedSfz(parsed)
+      setInstrument(next)
+      setSelectedCell(findCellWithHighestRegionIndex(next))
       setLoadGeneration((g) => g + 1)
       setDirty(true)
     } catch (err) {
