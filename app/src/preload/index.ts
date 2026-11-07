@@ -36,7 +36,8 @@ const api = {
     onMenuEvent('menu-import-recording', callback),
   onMenuOpen: (callback: () => void): (() => void) => onMenuEvent('menu-open', callback),
   onMenuSave: (callback: () => void): (() => void) => onMenuEvent('menu-save', callback),
-  onMenuSaveAs: (callback: () => void): (() => void) => onMenuEvent('menu-save-as', callback)
+  onMenuSaveAs: (callback: () => void): (() => void) => onMenuEvent('menu-save-as', callback),
+  onMenuDiscard: (callback: () => void): (() => void) => onMenuEvent('menu-discard', callback)
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -154,6 +154,10 @@ function buildMenu(): Menu {
         accelerator: 'CmdOrCtrl+Shift+S',
         click: () => mainWindow?.webContents.send('menu-save-as')
       },
+      {
+        label: 'Discard Changes',
+        click: () => mainWindow?.webContents.send('menu-discard')
+      },
       { type: 'separator' },
       { role: 'quit', accelerator: 'CmdOrCtrl+Q' }
     ]

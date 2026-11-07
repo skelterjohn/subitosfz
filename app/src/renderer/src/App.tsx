@@ -245,6 +245,19 @@ export default function App(): React.JSX.Element {
     await loadSfzFile(path)
   }
 
+  // Re-copies the real file over the working copy via loadSfzFile, throwing
+  // away every edit made since the last Open/Save - the "undo everything"
+  // escape hatch. Irreversible, so confirmed first, same as this app's
+  // other destructive actions (delete-from-disk, delete-all, delete-region).
+  // A no-op when there's nothing to discard.
+  async function discardChanges(): Promise<void> {
+    if (!sfzFilePath || !dirty) return
+    if (!window.confirm('Discard all unsaved changes and reload from disk? This can\'t be undone.')) {
+      return
+    }
+    await loadSfzFile(sfzFilePath)
+  }
+
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
   useEffect(() => {
@@ -272,13 +285,14 @@ export default function App(): React.JSX.Element {
   // different path/directory would need to rewrite every region's relative
   // sample= path too, which is a separate, bigger feature than Save.
   //
-  // Re-subscribes whenever sfzFilePath/workingPath change (i.e. on every
-  // open - edits don't touch either) rather than once on mount: an empty
-  // dependency array here would freeze the onMenuSave callback's closure
-  // on whatever saveSfzFile looked like at mount, when both paths were
-  // still null - Save would silently no-op forever after, since that
-  // captured closure's `if (!sfzFilePath || !workingPath) return` guard
-  // never sees a later open.
+  // Re-subscribes whenever sfzFilePath/workingPath/dirty change (i.e. on
+  // every open or edit) rather than once on mount: an empty dependency
+  // array here would freeze the onMenuSave callback's closure on whatever
+  // saveSfzFile/discardChanges looked like at mount, when sfzFilePath was
+  // still null and dirty still false - Save would silently no-op forever
+  // after, since that captured closure's `if (!sfzFilePath...) return`
+  // guard never sees a later open, and Discard Changes would never see a
+  // later edit flip dirty to true.
   useEffect(() => {
     if (!window.api) return
     const offImport = window.api.onMenuImport(() => setImportOpen(true))
@@ -292,14 +306,18 @@ export default function App(): React.JSX.Element {
     const offSaveAs = window.api.onMenuSaveAs(() => {
       console.log('[menu] save as requested - not implemented yet')
     })
+    const offDiscard = window.api.onMenuDiscard(() => {
+      discardChanges()
+    })
     return () => {
       offImport()
       offImportRecording()
       offOpen()
       offSave()
       offSaveAs()
+      offDiscard()
     }
-  }, [sfzFilePath, workingPath])
+  }, [sfzFilePath, workingPath, dirty])
 
   // The drawer is a pure filesystem diff (unassigned .wav files in the
   // project directory) - recomputed whenever the instrument changes (a
