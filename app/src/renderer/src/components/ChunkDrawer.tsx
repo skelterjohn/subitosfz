@@ -21,14 +21,10 @@ type ChunkState = { status: 'loading' } | { status: 'error' } | { status: 'ready
 function AssignIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
-      <polyline
-        points="4 12 10 18 20 6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <g stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+        <line x1="12" y1="4" x2="12" y2="20" />
+        <line x1="4" y1="12" x2="20" y2="12" />
+      </g>
     </svg>
   )
 }
