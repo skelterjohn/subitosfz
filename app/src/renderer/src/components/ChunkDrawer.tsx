@@ -140,6 +140,41 @@ export default function ChunkDrawer({
     }
   }
 
+  async function removeAll(): Promise<void> {
+    if (!sfzFilePath || chunks.length === 0) return
+    const fileNames = chunks.map((c) => c.fileName)
+    if (
+      !window.confirm(
+        `Delete all ${fileNames.length} unassigned sample${fileNames.length === 1 ? '' : 's'} from disk? This can't be undone.`
+      )
+    ) {
+      return
+    }
+
+    setDeletingFiles((prev) => new Set([...prev, ...fileNames]))
+    const failed: string[] = []
+    // Sequential, not Promise.all - this is irreversible disk I/O, not worth
+    // racing for speed over a list that's at most a few dozen files.
+    for (const fileName of fileNames) {
+      try {
+        await window.api.deleteSampleFile(sfzFilePath, fileName)
+        buffersRef.current.delete(fileName)
+        startedRef.current.delete(fileName)
+      } catch {
+        failed.push(fileName)
+      }
+    }
+    setDeletingFiles((prev) => {
+      const next = new Set(prev)
+      fileNames.forEach((f) => next.delete(f))
+      return next
+    })
+    onDeleted()
+    if (failed.length > 0) {
+      window.alert(`Failed to delete ${failed.length} sample${failed.length === 1 ? '' : 's'}:\n${failed.join('\n')}`)
+    }
+  }
+
   return (
     <>
       <button
@@ -155,7 +190,19 @@ export default function ChunkDrawer({
         {chunks.length > 0 && <span className="chunk-drawer__badge">{chunks.length}</span>}
       </button>
       <div className={`chunk-drawer${open ? ' is-open' : ''}`} aria-hidden={!open}>
-        <div className="chunk-drawer__header">Unassigned samples</div>
+        <div className="chunk-drawer__header">
+          <span className="chunk-drawer__header-label">Unassigned samples</span>
+          {chunks.length > 0 && (
+            <button
+              type="button"
+              className="chunk-drawer__delete-all"
+              onClick={removeAll}
+              disabled={deletingFiles.size > 0}
+            >
+              delete all
+            </button>
+          )}
+        </div>
         {chunks.length === 0 ? (
           <div className="chunk-drawer__empty">nothing waiting to be assigned</div>
         ) : (
