@@ -53,6 +53,10 @@ export default function App(): React.JSX.Element {
   const [importRecordingOpen, setImportRecordingOpen] = useState(false)
   const [assigningChunk, setAssigningChunk] = useState<DrawerChunk | null>(null)
   const [drawerChunks, setDrawerChunks] = useState<DrawerChunk[]>([])
+  // Lifted up from ChunkDrawer (rather than local state there) so a
+  // completed import can force it open - see ImportRecordingModal's
+  // onImported below.
+  const [drawerOpen, setDrawerOpen] = useState(false)
   // Bumped after a chunk-import that doesn't touch the .sfz at all, so the
   // drawer rescan effect below has a reason to re-run even though neither
   // `instrument` nor `sfzFilePath` changed.
@@ -359,7 +363,11 @@ export default function App(): React.JSX.Element {
         <ImportRecordingModal
           sfzFilePath={sfzFilePath}
           onClose={() => setImportRecordingOpen(false)}
-          onImported={() => setDrawerRefreshNonce((n) => n + 1)}
+          onImported={() => {
+            setDrawerRefreshNonce((n) => n + 1)
+            setDrawerOpen(true)
+            setImportRecordingOpen(false)
+          }}
         />
       )}
       {assigningChunk && sfzFilePath && workingPath && (
@@ -416,6 +424,8 @@ export default function App(): React.JSX.Element {
           <ChunkDrawer
             chunks={drawerChunks}
             sfzFilePath={sfzFilePath}
+            open={drawerOpen}
+            onToggle={() => setDrawerOpen((v) => !v)}
             onAssign={setAssigningChunk}
             onDeleted={() => setDrawerRefreshNonce((n) => n + 1)}
           />

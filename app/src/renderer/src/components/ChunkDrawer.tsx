@@ -5,6 +5,10 @@ import './ChunkDrawer.css'
 interface Props {
   chunks: DrawerChunk[]
   sfzFilePath: string | null
+  // Open state is owned by the parent (not local here) so a completed
+  // import can force the drawer open.
+  open: boolean
+  onToggle: () => void
   onAssign: (chunk: DrawerChunk) => void
   // Fired after a sample is deleted from disk, so the parent knows to
   // rescan the project directory - deleting doesn't touch the .sfz or the
@@ -46,10 +50,14 @@ function TrashIcon(): React.JSX.Element {
 // filename (unique within a project directory) - a chunk played here is a
 // flat preview, no envelope/loop/take-grouping the way SampleTakeList needs,
 // since it hasn't been assigned to anything yet.
-export default function ChunkDrawer({ chunks, sfzFilePath, onAssign, onDeleted }: Props): React.JSX.Element {
-  // Closed by default - this is a drawer, not a permanent panel. The tab
-  // stays visible/clickable either way, so there's always a way back in.
-  const [open, setOpen] = useState(false)
+export default function ChunkDrawer({
+  chunks,
+  sfzFilePath,
+  open,
+  onToggle,
+  onAssign,
+  onDeleted
+}: Props): React.JSX.Element {
   const [states, setStates] = useState<Record<string, ChunkState>>({})
   const [deletingFiles, setDeletingFiles] = useState<Set<string>>(new Set())
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -137,7 +145,7 @@ export default function ChunkDrawer({ chunks, sfzFilePath, onAssign, onDeleted }
       <button
         type="button"
         className={`chunk-drawer__tab${open ? ' is-open' : ''}`}
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         aria-label={open ? 'Close sample drawer' : 'Open sample drawer'}
         aria-expanded={open}
       >

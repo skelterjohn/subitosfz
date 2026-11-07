@@ -1,12 +1,7 @@
 import { useState } from 'react'
 import './ImportSf2Modal.css'
 
-interface ChunkSummary {
-  fileName: string
-  durationSec: number
-}
-
-type Status = 'idle' | 'chunking' | 'done' | 'error'
+type Status = 'idle' | 'chunking' | 'error'
 
 interface Props {
   sfzFilePath: string | null
@@ -24,7 +19,6 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
   const [baseName, setBaseName] = useState('')
   const [status, setStatus] = useState<Status>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [chunks, setChunks] = useState<ChunkSummary[]>([])
 
   async function pickFile(): Promise<void> {
     const path = await window.api.chooseAudioFile()
@@ -33,7 +27,6 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
     setBaseName(baseNameFromPath(path))
     setStatus('idle')
     setErrorMessage(null)
-    setChunks([])
   }
 
   async function runChunk(): Promise<void> {
@@ -53,9 +46,8 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
         const body = await res.json().catch(() => null)
         throw new Error(body?.error ?? `request failed (${res.status})`)
       }
-      const body = (await res.json()) as { chunks: ChunkSummary[] }
-      setChunks(body.chunks)
-      setStatus('done')
+      // The parent closes this modal and opens the drawer on success -
+      // nothing left to show here.
       onImported()
     } catch (err) {
       setErrorMessage(String(err))
@@ -119,12 +111,6 @@ export default function ImportRecordingModal({ sfzFilePath, onClose, onImported 
           <div className="import-modal__status">
             {status === 'error' && errorMessage && (
               <p className="import-modal__error">error: {errorMessage}</p>
-            )}
-            {status === 'done' && (
-              <p className="import-modal__success">
-                found {chunks.length} chunk{chunks.length === 1 ? '' : 's'} - check the drawer to assign
-                them
-              </p>
             )}
           </div>
         </div>
