@@ -71,7 +71,11 @@
 .chunk-drawer__badge {
   position: absolute;
   top: -6px;
-  right: -6px;
+  /* Top-LEFT of the tab, not right - the tab itself sits flush to the
+     actual window edge (right: -1.25rem), so a right-offset badge would
+     poke past that edge and get clipped by the window boundary, hiding it
+     entirely. */
+  left: -6px;
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
