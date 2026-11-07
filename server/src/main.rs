@@ -7,6 +7,7 @@ use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
 mod chunk;
+mod musescore;
 mod sf2;
 mod sfz_parse;
 mod sfz_write;
@@ -271,6 +272,37 @@ async fn save_handler(
         .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }
 
+#[derive(Deserialize)]
+struct MuseScoreInspectRequest {
+    path: String,
+}
+
+async fn musescore_inspect_handler(
+    Json(req): Json<MuseScoreInspectRequest>,
+) -> Result<Json<musescore::MuseScoreInfo>, (StatusCode, Json<ErrorResponse>)> {
+    musescore::inspect(&PathBuf::from(req.path))
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
+struct MuseScoreApplyRequest {
+    #[serde(rename = "museScorePath")]
+    musescore_path: String,
+    #[serde(rename = "sfzPath")]
+    sfz_path: String,
+    #[serde(rename = "partIds")]
+    part_ids: Vec<String>,
+}
+
+async fn musescore_apply_handler(
+    Json(req): Json<MuseScoreApplyRequest>,
+) -> Result<Json<musescore::ApplyResult>, (StatusCode, Json<ErrorResponse>)> {
+    musescore::apply(&PathBuf::from(req.musescore_path), &req.sfz_path, &req.part_ids)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -286,6 +318,8 @@ async fn main() {
         .route("/sfz/set-opcode", post(set_opcode_handler))
         .route("/sfz/set-cell-opcodes", post(set_cell_opcodes_handler))
         .route("/sfz/delete-region", post(delete_region_handler))
+        .route("/musescore/inspect", post(musescore_inspect_handler))
+        .route("/musescore/apply", post(musescore_apply_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)

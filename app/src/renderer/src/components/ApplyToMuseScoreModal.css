@@ -1,0 +1,31 @@
+.apply-musescore__track-list {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  flex: 1;
+  min-height: 100px;
+  overflow-y: auto;
+}
+
+.apply-musescore__track {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.apply-musescore__track:hover {
+  background: #f5f8ff;
+}
+
+.apply-musescore__track-label {
+  flex: 1;
+}
+
+.apply-musescore__track-sound {
+  color: #888;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}

@@ -5,9 +5,17 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.9"
+base64 = "0.22"
 hound = "3.5.1"
+roxmltree = "0.20"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 soundfont = "0.1.0"
 tokio = { version = "1.54.1", features = ["full"] }
 tower-http = { version = "0.7.1", features = ["cors"] }
+# default-features off: this app only ever reads/writes a plain, unencrypted
+# .mscz, so the default AES-encryption and zstd/lzma/bzip2 compression
+# backends are dead weight - and AES's RNG needs are what pull in a
+# getrandom backend that needs a working `dlltool` to link on this Windows
+# GNU toolchain (a real but separate toolchain gap, not worth chasing here).
+zip = { version = "2.2", default-features = false, features = ["deflate"] }

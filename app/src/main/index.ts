@@ -20,6 +20,7 @@ interface ImportDirs {
   lastDestDir?: string
   lastSfzDir?: string
   lastRecordingDir?: string
+  lastMuseScoreDir?: string
 }
 
 function importDirsPath(): string {
@@ -164,6 +165,11 @@ function buildMenu(): Menu {
         click: () => mainWindow?.webContents.send('menu-discard')
       },
       { type: 'separator' },
+      {
+        label: 'Apply to MuseScore…',
+        click: () => mainWindow?.webContents.send('menu-apply-musescore')
+      },
+      { type: 'separator' },
       { role: 'quit', accelerator: 'CmdOrCtrl+Q' }
     ]
   }
@@ -291,6 +297,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('delete-sample-file', async (_event, sfzFilePath: string, relativeSamplePath: string) => {
     const fullPath = join(dirname(sfzFilePath), relativeSamplePath)
     await unlink(fullPath)
+  })
+
+  ipcMain.handle('choose-musescore-file', async () => {
+    if (!mainWindow) return null
+    const dirs = loadImportDirs()
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a MuseScore file',
+      defaultPath: dirs.lastMuseScoreDir,
+      properties: ['openFile'],
+      filters: [{ name: 'MuseScore', extensions: ['mscz'] }]
+    })
+    if (result.canceled) return null
+    const filePath = result.filePaths[0]
+    saveImportDirs({ ...dirs, lastMuseScoreDir: dirname(filePath) })
+    return filePath
   })
 
   ipcMain.handle('choose-directory', async () => {

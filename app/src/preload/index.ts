@@ -31,6 +31,7 @@ const api = {
   deleteSampleFile: (sfzFilePath: string, relativeSamplePath: string): Promise<void> =>
     ipcRenderer.invoke('delete-sample-file', sfzFilePath, relativeSamplePath),
   chooseAudioFile: (): Promise<string | null> => ipcRenderer.invoke('choose-audio-file'),
+  chooseMuseScoreFile: (): Promise<string | null> => ipcRenderer.invoke('choose-musescore-file'),
   onMenuNew: (callback: () => void): (() => void) => onMenuEvent('menu-new', callback),
   onMenuImport: (callback: () => void): (() => void) => onMenuEvent('menu-import', callback),
   onMenuImportRecording: (callback: () => void): (() => void) =>
@@ -38,7 +39,9 @@ const api = {
   onMenuOpen: (callback: () => void): (() => void) => onMenuEvent('menu-open', callback),
   onMenuSave: (callback: () => void): (() => void) => onMenuEvent('menu-save', callback),
   onMenuSaveAs: (callback: () => void): (() => void) => onMenuEvent('menu-save-as', callback),
-  onMenuDiscard: (callback: () => void): (() => void) => onMenuEvent('menu-discard', callback)
+  onMenuDiscard: (callback: () => void): (() => void) => onMenuEvent('menu-discard', callback),
+  onMenuApplyMuseScore: (callback: () => void): (() => void) =>
+    onMenuEvent('menu-apply-musescore', callback)
 }
 
 contextBridge.exposeInMainWorld('api', api)

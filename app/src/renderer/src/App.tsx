@@ -4,6 +4,7 @@ import NewInstrumentModal from './components/NewInstrumentModal'
 import ImportSf2Modal from './components/ImportSf2Modal'
 import ImportRecordingModal from './components/ImportRecordingModal'
 import AssignChunkModal from './components/AssignChunkModal'
+import ApplyToMuseScoreModal from './components/ApplyToMuseScoreModal'
 import ChunkDrawer from './components/ChunkDrawer'
 import SampleEditorPanel from './components/SampleEditorPanel'
 import SampleTakeList from './components/SampleTakeList'
@@ -50,6 +51,7 @@ export default function App(): React.JSX.Element {
   const [startupMs, setStartupMs] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [newInstrumentOpen, setNewInstrumentOpen] = useState(false)
+  const [applyMuseScoreOpen, setApplyMuseScoreOpen] = useState(false)
   const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
   const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
@@ -273,6 +275,17 @@ export default function App(): React.JSX.Element {
     setNewInstrumentOpen(true)
   }
 
+  // Gate in front of the Apply-to-MuseScore modal: it's a no-op with
+  // nothing open to apply. Unlike requestNewInstrument, a dirty working
+  // copy isn't blocked here - the modal surfaces that as a non-blocking
+  // inline warning instead, since applying doesn't discard anything, it
+  // just risks embedding a stale (pre-edit) sfz path if the user proceeds
+  // without saving first.
+  function requestApplyToMuseScore(): void {
+    if (!sfzFilePath) return
+    setApplyMuseScoreOpen(true)
+  }
+
   // Measured on first render of this screen, independent of sidecar status,
   // so it always reports how long launch took to reach visible UI.
   useEffect(() => {
@@ -327,6 +340,9 @@ export default function App(): React.JSX.Element {
     const offDiscard = window.api.onMenuDiscard(() => {
       discardChanges()
     })
+    const offApplyMuseScore = window.api.onMenuApplyMuseScore(() => {
+      requestApplyToMuseScore()
+    })
     return () => {
       offNew()
       offImport()
@@ -335,6 +351,7 @@ export default function App(): React.JSX.Element {
       offSave()
       offSaveAs()
       offDiscard()
+      offApplyMuseScore()
     }
   }, [sfzFilePath, workingPath, dirty])
 
@@ -451,6 +468,13 @@ export default function App(): React.JSX.Element {
             setDrawerOpen(true)
             setImportRecordingOpen(false)
           }}
+        />
+      )}
+      {applyMuseScoreOpen && sfzFilePath && (
+        <ApplyToMuseScoreModal
+          sfzFilePath={sfzFilePath}
+          dirty={dirty}
+          onClose={() => setApplyMuseScoreOpen(false)}
         />
       )}
       {assigningChunk && sfzFilePath && workingPath && (
