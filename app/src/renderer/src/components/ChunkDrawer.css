@@ -8,7 +8,10 @@
 .chunk-drawer {
   position: absolute;
   top: 30px;
-  right: 0;
+  /* Flush to the actual window edge, not just this column's edge - the
+     root app container has 1.25rem of padding (App.tsx), so right:0 here
+     would otherwise leave that much of a gap to the real viewport edge. */
+  right: -1.25rem;
   bottom: 0;
   left: auto;
   width: 220px;
@@ -38,7 +41,9 @@
 .chunk-drawer__tab {
   position: absolute;
   top: 2px;
-  right: 0;
+  /* Same reasoning as .chunk-drawer's right offset above - flush to the
+     actual window edge, not this column's edge. */
+  right: -1.25rem;
   z-index: 21;
   cursor: pointer;
   width: 26px;
