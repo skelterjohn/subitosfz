@@ -14,8 +14,11 @@
 // needs to resolve a sample= path (relative to wherever the project's
 // actual assets live) is given the ORIGINAL path separately and derives
 // the project directory from THAT, never from the working path.
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+use serde::Serialize;
 
 use crate::sfz_parse::{self, ParsedSfz};
 
@@ -332,4 +335,154 @@ pub fn set_cell_opcodes(
     fs::write(working_sfz_path, &text).map_err(|e| format!("failed to write sfz file: {e}"))?;
 
     sfz_parse::parse(working_sfz_path)
+}
+
+// --- Keyswitch variant, for "Apply to MuseScore" ---
+//
+// The sw_last=<id> this app's own UI writes (see append_region above) is a
+// cosmetic string label used for cell-grouping in Subito's own editor, not
+// a functioning SFZ keyswitch - nothing anywhere sets sw_lokey/sw_hikey
+// (the opcodes that make a key range act as a switch TRIGGER rather than
+// an audible note), so regions with different sw_last values today just
+// play simultaneously whenever their key/vel ranges overlap (the correct,
+// intentional behavior for e.g. a stereo pair's L/R regions). A real
+// keyswitch needs both: a reserved trigger range, and every region tagged
+// with a real numeric sw_last inside it.
+//
+// Rather than rewrite the user's own hand-edited .sfz (whose string
+// articulation ids are for Subito's own UI, not real engine switching),
+// this generates a separate sibling file purely for MuseScore playback,
+// regenerated fresh on every Apply.
+
+#[derive(Serialize)]
+pub struct ArticulationNote {
+    pub id: String,
+    pub note: u8,
+}
+
+#[derive(Serialize)]
+pub struct KeyswitchSfz {
+    #[serde(rename = "derivedPath")]
+    pub derived_path: String,
+    pub notes: Vec<ArticulationNote>,
+}
+
+// Every <region> header position, by the same counting rule region_span
+// itself uses - needed here because RegionInfo.index (from
+// sfz_parse::parse) only covers regions that have both a sample= opcode
+// AND resolvable note info (sfz_parse.rs's region_note/sample= gates); a
+// region missing either is invisible to that map but still needs a real
+// sw_last once a switch zone exists, or it would keep sounding
+// unconditionally regardless of switch state.
+fn count_regions(text: &str) -> usize {
+    let mut count = 0usize;
+    for line in text.lines() {
+        let code = match line.find("//") {
+            Some(idx) => &line[..idx],
+            None => line,
+        };
+        if code.split_whitespace().next() == Some("<region>") {
+            count += 1;
+        }
+    }
+    count
+}
+
+pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz, String> {
+    let parsed = sfz_parse::parse(original_sfz_path)?;
+
+    // Stable order: whatever parse() already returns (numeric ids first,
+    // "normal" last - see sfz_parse.rs's own sort). Every distinct
+    // articulation, including the implicit "normal" bucket for regions
+    // with no sw_last at all, gets a reserved note.
+    let ids: Vec<&str> = parsed.articulations.iter().map(|a| a.id.as_str()).collect();
+    let n = ids.len();
+    if n == 0 {
+        return Err("this sfz has no regions to build a keyswitch zone for".to_string());
+    }
+    if n > 128 {
+        return Err("too many distinct articulations for a keyswitch zone (max 128)".to_string());
+    }
+    let n16 = n as u16;
+
+    // Prefer the TOP of the MIDI range (127 downward) - virtually no real
+    // instrument plays there, unlike the bottom, which a low bass/
+    // extended-range instrument's own real notes could collide with.
+    //
+    // Deliberately uses the cells' own recorded ANCHOR pitches
+    // (region_note() in sfz_parse.rs - what a sample was actually
+    // recorded at), not parsed.notes' full lokey..hikey span. A region's
+    // outermost lokey=0/hikey=127 is a standard SFZ catch-all convention
+    // ("anything below my lowest sample"/"anything above my highest"),
+    // not a claim the instrument truly plays those extremes - treating
+    // that span as the real range to protect would make nearly every
+    // realistic multi-sampled instrument report "no room" immediately.
+    let lo_bound = parsed.cells.iter().map(|c| c.note).min();
+    let hi_bound = parsed.cells.iter().map(|c| c.note).max();
+    let (switch_lo, switch_hi): (u8, u8) = if hi_bound.map(|hi| (hi as u16) < 128 - n16).unwrap_or(true) {
+        ((128 - n16) as u8, 127)
+    } else if lo_bound.map(|lo| (lo as u16) >= n16).unwrap_or(true) {
+        (0, (n16 - 1) as u8)
+    } else {
+        return Err(
+            "no room for a keyswitch zone - this instrument already uses the full MIDI range".to_string()
+        );
+    };
+
+    let note_for: HashMap<&str, u8> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| (id, switch_lo + i as u8))
+        .collect();
+
+    // Every region's resolved articulation, per sfz_parse's own cascading -
+    // no need to reimplement global/master/group inheritance here.
+    let mut region_articulation: HashMap<usize, &str> = HashMap::new();
+    for cell in &parsed.cells {
+        for take in &cell.samples {
+            for region in &take.regions {
+                region_articulation.insert(region.index, cell.articulation.as_str());
+            }
+        }
+    }
+
+    let text = fs::read_to_string(original_sfz_path).map_err(|e| format!("failed to read file: {e}"))?;
+    let total_regions = count_regions(&text);
+
+    let mut inserts: Vec<(usize, String)> = Vec::with_capacity(total_regions);
+    for idx in 0..total_regions {
+        let articulation_id = region_articulation.get(&idx).copied().unwrap_or("normal");
+        let note = *note_for.get(articulation_id).unwrap_or(&switch_lo);
+        let offset = region_insertion_offset(&text, idx)?;
+        inserts.push((offset, format!("sw_lokey={switch_lo}\nsw_hikey={switch_hi}\nsw_last={note}\n")));
+    }
+    // Descending, so each splice doesn't invalidate the offsets of
+    // inserts still waiting to be applied (same discipline as
+    // set_cell_opcodes above).
+    inserts.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut new_text = text;
+    for (offset, snippet) in inserts {
+        new_text.insert_str(offset, &snippet);
+    }
+
+    let stem = original_sfz_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("instrument");
+    let derived_path = original_sfz_path.with_file_name(format!("{stem}.musescore.sfz"));
+    fs::write(&derived_path, &new_text).map_err(|e| format!("failed to write keyswitch sfz: {e}"))?;
+
+    let notes = ids
+        .iter()
+        .map(|&id| ArticulationNote {
+            id: id.to_string(),
+            note: note_for[id],
+        })
+        .collect();
+
+    Ok(KeyswitchSfz {
+        derived_path: derived_path.to_string_lossy().to_string(),
+        notes,
+    })
 }

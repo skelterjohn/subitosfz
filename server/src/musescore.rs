@@ -63,6 +63,8 @@ pub struct ApplyResult {
     pub tracks_applied: usize,
     #[serde(rename = "backupPath")]
     pub backup_path: String,
+    #[serde(rename = "keyswitchSfzPath")]
+    pub keyswitch_sfz_path: String,
 }
 
 fn read_zip_entries(path: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
@@ -250,6 +252,459 @@ fn find_articulations(mscx_text: &str) -> Vec<ArticulationMark> {
     out
 }
 
+// --- Keyswitch injection ---
+//
+// Turns a user's articulation mapping into real hidden notes in the
+// score. Two different attachment rules, deliberately: a notehead or
+// <Articulation> symbol mark applies ONLY to the exact chord it's on
+// (real notation convention - a staccato dot is per-note), while a
+// StaffText/PlayTechAnnotation mark is positional (not nested in a
+// chord - see find_articulations' own doc comment) and, once seen,
+// persists as the "current mode" for every later chord in that voice
+// until a later text mark changes it (a real "pizz."..."arco" marking
+// is a mode switch, not a single-note annotation). A switch note is
+// injected on EVERY chord (not just at transitions) since sfizz's switch
+// state otherwise persists indefinitely until the next one - "only
+// inject on change" would be a later efficiency nicety, not attempted
+// here. v1 limitation: only Staff ids matching a selected partId are
+// walked (single-staff-per-part assumed - a piano's second staff, or a
+// guitar's linked TAB staff, aren't handled), and only each Measure's
+// FIRST <voice> child (voices 2-4 ignored).
+const NONE_SENTINEL: &str = "__none__";
+
+// None = "no mapping for this mark, fall through to whatever's next in
+// the resolution order" - deliberately distinct from Some(NONE_SENTINEL)
+// ("explicitly silence this mark") and from an unmapped mark being
+// treated as a reset (see the StaffText handling below, where this
+// matters: an unmapped text annotation - e.g. a decorative rehearsal
+// label like "theme" that happens to use the same tag as a real
+// technique marking - must NOT cancel whatever real technique mode is
+// already in effect).
+fn resolve_mark(mapping: &HashMap<String, String>, key: &str) -> Option<String> {
+    match mapping.get(key).map(String::as_str) {
+        Some("") | None => None,
+        Some(v) => Some(v.to_string()),
+    }
+}
+
+// Marks directly attached to this chord's own content - articulation
+// symbols checked first (a more deliberate marking than a notehead
+// convention), then noteheads (absent <head> defaults to "normal", same
+// as find_articulations' own scan).
+fn chord_direct_mark(chord: roxmltree::Node, mapping: &HashMap<String, String>) -> Option<String> {
+    for art in chord.children().filter(|n| n.has_tag_name("Articulation")) {
+        let subtype = art
+            .children()
+            .find(|n| n.has_tag_name("subtype"))
+            .and_then(element_text)
+            .map(str::trim);
+        if let Some(subtype) = subtype.filter(|s| !s.is_empty()) {
+            let label = camel_to_words(&normalize_articulation_subtype(subtype));
+            if let Some(resolved) = resolve_mark(mapping, &format!("symbol:{label}")) {
+                return Some(resolved);
+            }
+        }
+    }
+    for note in chord.children().filter(|n| n.has_tag_name("Note")) {
+        let head = note
+            .children()
+            .find(|n| n.has_tag_name("head"))
+            .and_then(element_text)
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .unwrap_or("normal");
+        if let Some(resolved) = resolve_mark(mapping, &format!("notehead:{head}")) {
+            return Some(resolved);
+        }
+    }
+    None
+}
+
+// End offset of this node's last element child - where to insert a new
+// last child, right before the node's own closing tag.
+fn last_child_end(node: roxmltree::Node) -> usize {
+    node.children()
+        .filter(|n| n.is_element())
+        .last()
+        .map(|n| n.range().end)
+        .unwrap_or_else(|| node.range().end)
+}
+
+// Right after <tpc> (or <pitch> if no tpc) - matches the element order a
+// real MuseScore-written Note uses (eid, visible, pitch, tpc, play,
+// fret, string - confirmed by hand-editing a test file and diffing),
+// rather than blindly appending as the last child regardless of order.
+fn mute_insertion_offset(note: roxmltree::Node) -> usize {
+    note.children()
+        .find(|n| n.has_tag_name("tpc"))
+        .or_else(|| note.children().find(|n| n.has_tag_name("pitch")))
+        .map(|n| n.range().end)
+        .unwrap_or_else(|| last_child_end(note))
+}
+
+// Standard MuseScore tonal-pitch-class value per chroma (C=0..B=11) -
+// confirmed against a real file (pitch 59 / B -> tpc 19, index 11 here).
+// Only used for hidden keyswitch notes, so any valid spelling is fine.
+const TPC_BY_CHROMA: [i8; 12] = [14, 21, 16, 23, 18, 13, 20, 15, 22, 17, 24, 19];
+
+// A fixed, recognizable prefix on every injected note's synthetic eid -
+// the "signature" that lets a later apply find and remove its own
+// previous injections before adding fresh ones (see
+// remove_previous_keyswitch_notes), rather than stacking duplicates on
+// every repeat apply.
+const KEYSWITCH_EID_PREFIX: &str = "subitosfz-ks-";
+
+// Not a real MuseScore-format id (the exact generation algorithm is
+// unknown) - just a syntactically plausible, guaranteed-unique-within-
+// this-file opaque string in the same base64-ish-with-underscore shape
+// observed in real files, just with the recognizable prefix above.
+// Counter-seeded rather than truly random so it needs no new dependency -
+// adding `rand` would reintroduce the same getrandom/dlltool build issue
+// already hit and avoided for `zip`.
+fn random_eid() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let mut x = COUNTER.fetch_add(1, Ordering::Relaxed) ^ nanos ^ 0x9E3779B97F4A7C15;
+
+    let mut segment = |len: usize| -> String {
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                ALPHABET[(x as usize) % ALPHABET.len()] as char
+            })
+            .collect()
+    };
+    format!("{KEYSWITCH_EID_PREFIX}{}_{}", segment(11), segment(11))
+}
+
+// Deletes every Part+Staff pair left over from a previous apply
+// (identified by the KEYSWITCH_EID_PREFIX signature on the Part's own
+// Instrument id), so repeat applies replace the hidden keyswitch staff
+// rather than accumulating a new one on every apply. Global, not scoped
+// to the currently-selected parts - a previous apply to a different part
+// selection shouldn't leave orphaned staves behind either.
+// Deliberately NOT extended to <play>0</play> mute flags (added for
+// NONE_SENTINEL-mapped marks): a bare flag on an existing real note has
+// no equivalent signature to distinguish "Subito added this" from a mute
+// the user set themselves by hand, so auto-removing it risks undoing the
+// user's own work - documented gap, not attempted here.
+fn remove_previous_keyswitch_staves(doc: &roxmltree::Document, edits: &mut Vec<(std::ops::Range<usize>, String)>) {
+    for part in doc.descendants().filter(|n| n.has_tag_name("Part")) {
+        let is_ours = part
+            .descendants()
+            .find(|n| n.has_tag_name("Instrument"))
+            .and_then(|i| i.attribute("id"))
+            .is_some_and(|id| id.starts_with(KEYSWITCH_EID_PREFIX));
+        if !is_ours {
+            continue;
+        }
+        edits.push((part.range(), String::new()));
+        if let Some(part_id) = part.attribute("id") {
+            if let Some(staff) = doc
+                .descendants()
+                .find(|n| n.has_tag_name("Staff") && n.attribute("id") == Some(part_id))
+            {
+                edits.push((staff.range(), String::new()));
+            }
+        }
+    }
+}
+
+fn max_attr_value(doc: &roxmltree::Document, tag: &str, attr: &str) -> u32 {
+    doc.descendants()
+        .filter(|n| n.has_tag_name(tag))
+        .filter_map(|n| n.attribute(attr))
+        .filter_map(|v| v.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+fn max_element_value(doc: &roxmltree::Document, tag: &str) -> u32 {
+    doc.descendants()
+        .filter(|n| n.has_tag_name(tag))
+        .filter_map(element_text)
+        .filter_map(|t| t.trim().parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
+// A Chord or Rest's own duration-defining children (durationType and
+// dots, if present), copied verbatim as raw text - the minimum needed to
+// replicate a measure's timing on the mirrored keyswitch staff, with no
+// parsing/reformatting risk. Tuplets aren't specially handled - an
+// accepted v1 limitation (not exercised by any score tested so far).
+fn duration_xml(node: roxmltree::Node, source: &str) -> String {
+    let mut out = String::new();
+    if let Some(dt) = node.children().find(|n| n.has_tag_name("durationType")) {
+        out.push_str(&source[dt.range()]);
+    }
+    if let Some(dots) = node.children().find(|n| n.has_tag_name("dots")) {
+        out.push_str(&source[dots.range()]);
+    }
+    out
+}
+
+// Result of injecting keyswitches: the new .mscx text, plus the partIds
+// of any newly-created hidden keyswitch staves (apply() still needs to
+// give each of these its own audiosettings.json track entry).
+struct InjectResult {
+    mscx_text: String,
+    new_part_ids: Vec<String>,
+}
+
+// Builds one dedicated, hidden keyswitch staff per selected part, rather
+// than injecting switch notes into the real notation staff. Three
+// iterations of the latter (an extra Note in the host chord, a separate
+// grace-note Chord, Chord-level <visible>) all left the *printed/exported*
+// layout stretched vertically - confirmed each time against real PDF
+// output, not just the edit view - because MuseScore's layout engine
+// reserves vertical space from a note's real pitch regardless of any
+// invisible flag at any level tried. The fix, confirmed by hand (add a
+// plain second staff, put an extreme-pitch note on it, hide the STAFF
+// itself via the Instruments panel visibility toggle, confirm clean in
+// both edit view and printed PDF): hiding a whole staff is a different,
+// apparently more fundamental mechanism than hiding an element within an
+// existing one.
+//
+// IMPORTANT UNVERIFIED RISK: each MuseScore Part is its own independent
+// Mixer track with (as far as everything inspected this session shows)
+// its own independently-instantiated plugin. The keyswitch mechanism
+// depends on the switch note and the real note landing in the SAME
+// sfizz instance's internal "last switch" state - that's exactly why
+// same-staff injection worked. Moving the switch note to a separate Part
+// means it's a separate Mixer track, which may mean a separate sfizz
+// instance entirely - in which case triggering a switch there would have
+// NO effect on the real track's own instance, silently breaking the
+// thing already confirmed working by ear. apply() gives the new part the
+// exact same sfizz+derived-sfz assignment as the real part as a
+// best-effort attempt, but this is NOT the same as confirming MuseScore
+// actually shares - or can share - one plugin instance across Parts.
+// This needs a real listening test before being trusted, not just the
+// structural/visual verification this module can do on its own.
+fn inject_keyswitches(
+    mscx_text: &str,
+    part_ids: &[String],
+    mark_mapping: &HashMap<String, String>,
+    default_articulation: &str,
+    articulation_notes: &HashMap<String, u8>,
+) -> Result<InjectResult, String> {
+    let doc = roxmltree::Document::parse(mscx_text).map_err(|e| format!("failed to parse mscx: {e}"))?;
+    let default_resolved = (!default_articulation.is_empty()).then(|| default_articulation.to_string());
+
+    // (byte range, replacement text), computed against the ORIGINAL text
+    // and applied back-to-front - same discipline sfz_write.rs uses. A
+    // pure insertion is a zero-width range (offset..offset).
+    let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut new_part_ids: Vec<String> = Vec::new();
+
+    remove_previous_keyswitch_staves(&doc, &mut edits);
+
+    let (switch_lo, switch_hi) = match (
+        articulation_notes.values().copied().min(),
+        articulation_notes.values().copied().max(),
+    ) {
+        (Some(lo), Some(hi)) => (lo, hi),
+        _ => (0, 0), // no articulations at all - nothing to switch, loop below just does nothing
+    };
+
+    let mut next_part_id = max_attr_value(&doc, "Part", "id") + 1;
+    let mut next_staff_id = max_attr_value(&doc, "Staff", "id") + 1;
+    let mut next_midi_channel = max_element_value(&doc, "midiChannel") + 1;
+
+    for part in doc.descendants().filter(|n| n.has_tag_name("Part")) {
+        let Some(part_id_str) = part.attribute("id") else { continue };
+        if !part_ids.iter().any(|p| p == part_id_str) {
+            continue;
+        }
+        let Some(real_staff) = doc
+            .descendants()
+            .find(|n| n.has_tag_name("Staff") && n.attribute("id") == Some(part_id_str))
+        else {
+            continue; // no notation content for this part - nothing to mirror
+        };
+        let Some(instrument) = part.descendants().find(|n| n.has_tag_name("Instrument")) else {
+            continue;
+        };
+        if articulation_notes.is_empty() {
+            continue;
+        }
+
+        let new_part_id = next_part_id;
+        let new_staff_id = next_staff_id;
+        let open_channel = next_midi_channel;
+        let mute_channel = next_midi_channel + 1;
+        next_part_id += 1;
+        next_staff_id += 1;
+        next_midi_channel += 2;
+        new_part_ids.push(new_part_id.to_string());
+
+        let instrument_id = instrument.attribute("id").unwrap_or("instrument");
+        let long_name = instrument
+            .children()
+            .find(|n| n.has_tag_name("longName"))
+            .and_then(element_text)
+            .unwrap_or("")
+            .trim();
+        let track_name = instrument
+            .children()
+            .find(|n| n.has_tag_name("trackName"))
+            .and_then(element_text)
+            .unwrap_or("")
+            .trim();
+        let instrument_id_value = instrument
+            .children()
+            .find(|n| n.has_tag_name("instrumentId"))
+            .and_then(element_text)
+            .unwrap_or("")
+            .trim();
+        let clef = instrument
+            .children()
+            .find(|n| n.has_tag_name("clef"))
+            .and_then(element_text)
+            .unwrap_or("G")
+            .trim();
+        let default_clef = part
+            .descendants()
+            .find(|n| n.has_tag_name("defaultClef"))
+            .and_then(element_text)
+            .unwrap_or("G")
+            .trim();
+        // Copied verbatim if present - harmless on a pitched (non-tab)
+        // staff, same as it already is on the real staff's own
+        // Instrument block.
+        let string_data = instrument
+            .children()
+            .find(|n| n.has_tag_name("StringData"))
+            .map(|n| &mscx_text[n.range()])
+            .unwrap_or("");
+
+        let new_part_xml = format!(
+            "<Part id=\"{new_part_id}\">\
+<Staff>\
+<eid>{}</eid>\
+<StaffType group=\"pitched\"><name>stdNormal</name><invisible>1</invisible></StaffType>\
+<defaultClef>{default_clef}</defaultClef>\
+<isStaffVisible>0</isStaffVisible>\
+</Staff>\
+<show>0</show>\
+<trackName>{track_name}</trackName>\
+<Instrument id=\"{KEYSWITCH_EID_PREFIX}{instrument_id}\">\
+<longName>{long_name} - subito keyswitches</longName>\
+<shortName>{long_name} - subito keyswitches</shortName>\
+<trackName>{track_name}</trackName>\
+<minPitchP>{switch_lo}</minPitchP><maxPitchP>{switch_hi}</maxPitchP>\
+<minPitchA>{switch_lo}</minPitchA><maxPitchA>{switch_hi}</maxPitchA>\
+<instrumentId>{instrument_id_value}</instrumentId>\
+<clef>{clef}</clef>\
+{string_data}\
+<Channel name=\"open\"><program value=\"0\"/><synti>Fluid</synti><midiPort>0</midiPort><midiChannel>{open_channel}</midiChannel></Channel>\
+<Channel name=\"mute\"><program value=\"0\"/><synti>Fluid</synti><midiPort>0</midiPort><midiChannel>{mute_channel}</midiChannel></Channel>\
+</Instrument>\
+</Part>\n",
+            random_eid()
+        );
+        edits.push((part.range().end..part.range().end, new_part_xml));
+
+        // One pass over the real staff's rhythm, both collecting mute
+        // edits for the real notes (NONE_SENTINEL case, unchanged from
+        // before) and building the mirrored keyswitch staff's content in
+        // lockstep, so every switch event lands at the same tick as the
+        // chord it switches.
+        let mut current_text_mode: Option<String> = None;
+        let mut staff_body = String::new();
+
+        for measure in real_staff.children().filter(|n| n.has_tag_name("Measure")) {
+            staff_body.push_str("<Measure><voice>");
+            if let Some(voice) = measure.children().find(|n| n.has_tag_name("voice")) {
+                for child in voice.children().filter(|n| n.is_element()) {
+                    if child.has_tag_name("TimeSig") || child.has_tag_name("KeySig") {
+                        staff_body.push_str(&mscx_text[child.range()]);
+                        continue;
+                    }
+                    if child.has_tag_name("StaffText") || child.has_tag_name("PlayTechAnnotation") {
+                        let text = child
+                            .children()
+                            .find(|n| n.has_tag_name("text"))
+                            .and_then(element_text)
+                            .map(str::trim);
+                        if let Some(text) = text.filter(|t| !t.is_empty()) {
+                            // Only overwrite the running mode on a mark
+                            // that actually resolves to something - an
+                            // unmapped text annotation (e.g. a decorative
+                            // rehearsal label sharing the same tag) must
+                            // not cancel a real technique mode already in
+                            // effect.
+                            if let Some(resolved) = resolve_mark(mark_mapping, &format!("text:{text}")) {
+                                current_text_mode = Some(resolved);
+                            }
+                        }
+                        continue;
+                    }
+                    if child.has_tag_name("Rest") {
+                        staff_body.push_str(&format!(
+                            "<Rest><eid>{}</eid>{}</Rest>",
+                            random_eid(),
+                            duration_xml(child, mscx_text)
+                        ));
+                        continue;
+                    }
+                    if !child.has_tag_name("Chord") {
+                        continue; // Dynamic, Tempo, Spanner, Fingering, Articulation - irrelevant here
+                    }
+
+                    let resolved = chord_direct_mark(child, mark_mapping)
+                        .or_else(|| current_text_mode.clone())
+                        .or_else(|| default_resolved.clone())
+                        .unwrap_or_else(|| "normal".to_string());
+                    let duration = duration_xml(child, mscx_text);
+
+                    if resolved == NONE_SENTINEL {
+                        for note in child.children().filter(|n| n.has_tag_name("Note")) {
+                            let offset = mute_insertion_offset(note);
+                            edits.push((offset..offset, "<play>0</play>\n".to_string()));
+                        }
+                        staff_body.push_str(&format!("<Rest><eid>{}</eid>{duration}</Rest>", random_eid()));
+                        continue;
+                    }
+
+                    let Some(&note_number) = articulation_notes.get(&resolved) else {
+                        return Err(format!("no reserved keyswitch note for articulation \"{resolved}\""));
+                    };
+                    let tpc = TPC_BY_CHROMA[(note_number % 12) as usize];
+                    staff_body.push_str(&format!(
+                        "<Chord><eid>{}</eid>{duration}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note></Chord>",
+                        random_eid(),
+                        random_eid()
+                    ));
+                }
+            }
+            staff_body.push_str("</voice></Measure>");
+        }
+
+        let new_staff_xml = format!("<Staff id=\"{new_staff_id}\">{staff_body}</Staff>\n");
+        edits.push((real_staff.range().end..real_staff.range().end, new_staff_xml));
+    }
+
+    // Descending by start, so each splice doesn't invalidate the offsets
+    // of edits still waiting to be applied - same discipline sfz_write.rs
+    // uses for its own multi-offset splices.
+    edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+
+    let mut new_text = mscx_text.to_string();
+    for (range, replacement) in edits {
+        new_text.replace_range(range, &replacement);
+    }
+    Ok(InjectResult { mscx_text: new_text, new_part_ids })
+}
+
 // Everything that makes this "is it actually a MuseScore 4 file" - its
 // absence is also this module's required-version check, since
 // audiosettings.json is a MuseScore 4 addition (MuseScore 3 keeps sound
@@ -373,15 +828,20 @@ fn backup_path_for(musescore_path: &Path) -> PathBuf {
     musescore_path.with_file_name(name)
 }
 
-// Points every track in `part_ids` at `sfz_path` via sfizz, leaving every
-// other field (aux sends, volume, mute/solo, the .mscx itself) untouched.
-// Backs up the original file first (`<name>.mscz.bak`, overwritten on
-// repeat use) since this writes raw zip/JSON rather than going through
-// MuseScore's own save path.
+// Points every track in `part_ids` at a derived, keyswitch-enabled copy
+// of `sfz_path` via sfizz (see build_keyswitch_variant - the user's real
+// .sfz is never touched), injects hidden keyswitch notes into the
+// selected tracks' own notation per `articulation_mapping`/
+// `default_articulation_id`, and leaves every other field (aux sends,
+// volume, mute/solo) untouched. Backs up the original file first
+// (`<name>.mscz.bak`, overwritten on repeat use) since this writes raw
+// zip/JSON/XML rather than going through MuseScore's own save path.
 pub fn apply(
     musescore_path: &Path,
     sfz_path: &str,
     part_ids: &[String],
+    articulation_mapping: &HashMap<String, String>,
+    default_articulation_id: &str,
 ) -> Result<ApplyResult, String> {
     if part_ids.is_empty() {
         return Err("no tracks selected".to_string());
@@ -390,8 +850,33 @@ pub fn apply(
         return Err(format!("sfz file not found: {sfz_path}"));
     }
 
+    let keyswitch = crate::sfz_write::build_keyswitch_variant(Path::new(sfz_path))?;
+    let articulation_notes: HashMap<String, u8> = keyswitch
+        .notes
+        .iter()
+        .map(|n| (n.id.clone(), n.note))
+        .collect();
+
     let mut entries = read_zip_entries(musescore_path)?;
     let settings_index = find_audiosettings(&entries)?;
+
+    let mscx_index = entries
+        .iter()
+        .position(|(name, _)| name.ends_with(".mscx"))
+        .ok_or_else(|| "no .mscx found inside this file".to_string())?;
+    // Strict, not lossy - inject_keyswitches' byte offsets come from this
+    // exact text via roxmltree, and a lossy replacement would change the
+    // byte length, desyncing every offset from what gets spliced back in.
+    let mscx_text = String::from_utf8(entries[mscx_index].1.clone())
+        .map_err(|_| "the .mscx is not valid UTF-8".to_string())?;
+    let inject_result = inject_keyswitches(
+        &mscx_text,
+        part_ids,
+        articulation_mapping,
+        default_articulation_id,
+        &articulation_notes,
+    )?;
+    entries[mscx_index].1 = inject_result.mscx_text.into_bytes();
 
     let mut settings: Value = serde_json::from_slice(&entries[settings_index].1)
         .map_err(|e| format!("failed to parse audiosettings.json: {e}"))?;
@@ -408,7 +893,7 @@ pub fn apply(
             "vendor": "SFZTools"
         },
         "unitConfiguration": {
-            "componentState": sfizz_component_state(sfz_path)
+            "componentState": sfizz_component_state(&keyswitch.derived_path)
         }
     });
 
@@ -416,6 +901,16 @@ pub fn apply(
         .get_mut("tracks")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| "audiosettings.json has no tracks array".to_string())?;
+
+    // Drop any track left over from a previous apply's hidden keyswitch
+    // staff (identified the same way as the mscx side - instrumentId
+    // carries the KEYSWITCH_EID_PREFIX signature) before adding fresh
+    // ones, same idempotency discipline as remove_previous_keyswitch_staves.
+    tracks.retain(|t| {
+        !t.get("instrumentId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with(KEYSWITCH_EID_PREFIX))
+    });
 
     let mut applied = 0usize;
     for track in tracks.iter_mut() {
@@ -433,6 +928,29 @@ pub fn apply(
         applied += 1;
     }
 
+    // Give each new hidden keyswitch staff its OWN Mixer track entry,
+    // pointed at the exact same sfizz+derived-sfz assignment as the real
+    // part it switches - see inject_keyswitches' own doc comment for why
+    // this is a best-effort attempt, not a confirmed-working mechanism:
+    // whether MuseScore actually shares one plugin instance's internal
+    // keyswitch state across two different Parts is unverified.
+    for new_part_id in &inject_result.new_part_ids {
+        tracks.push(serde_json::json!({
+            "in": sfizz_in,
+            "instrumentId": format!("{KEYSWITCH_EID_PREFIX}keyswitches"),
+            "out": {
+                "balance": 0,
+                "fxChain": {},
+                "volumeDb": 0
+            },
+            "partId": new_part_id,
+            "soloMuteState": {
+                "mute": false,
+                "solo": false
+            }
+        }));
+    }
+
     if applied == 0 {
         return Err("none of the selected part IDs were found in this file".to_string());
     }
@@ -448,5 +966,6 @@ pub fn apply(
     Ok(ApplyResult {
         tracks_applied: applied,
         backup_path: backup_path.to_string_lossy().to_string(),
+        keyswitch_sfz_path: keyswitch.derived_path,
     })
 }

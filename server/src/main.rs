@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -293,12 +294,22 @@ struct MuseScoreApplyRequest {
     sfz_path: String,
     #[serde(rename = "partIds")]
     part_ids: Vec<String>,
+    #[serde(rename = "articulationMapping", default)]
+    articulation_mapping: HashMap<String, String>,
+    #[serde(rename = "defaultArticulationId", default)]
+    default_articulation_id: String,
 }
 
 async fn musescore_apply_handler(
     Json(req): Json<MuseScoreApplyRequest>,
 ) -> Result<Json<musescore::ApplyResult>, (StatusCode, Json<ErrorResponse>)> {
-    musescore::apply(&PathBuf::from(req.musescore_path), &req.sfz_path, &req.part_ids)
+    musescore::apply(
+        &PathBuf::from(req.musescore_path),
+        &req.sfz_path,
+        &req.part_ids,
+        &req.articulation_mapping,
+        &req.default_articulation_id
+    )
         .map(Json)
         .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
 }

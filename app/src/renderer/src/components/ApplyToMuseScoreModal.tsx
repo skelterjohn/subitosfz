@@ -35,6 +35,7 @@ interface MuseScoreInfo {
 interface ApplyResult {
   tracksApplied: number
   backupPath: string
+  keyswitchSfzPath: string
 }
 
 type Status = 'idle' | 'inspecting' | 'ready' | 'applying' | 'done' | 'error'
@@ -73,9 +74,9 @@ export default function ApplyToMuseScoreModal({
   const [defaultArticulationId, setDefaultArticulationId] = useState('')
   // Keyed by `${kind}:${id}` -> '' to inherit defaultArticulationId above,
   // NONE_SENTINEL to explicitly silence this mark instead, or a real sfz
-  // articulation id to override the default just for this mark. Purely UI
-  // state for now: there's no backend support yet for actually acting on a
-  // mapping (injecting keyswitch notes), so Apply doesn't send any of this.
+  // articulation id to override the default just for this mark. Sent
+  // as-is to /musescore/apply, which injects a hidden keyswitch note (or
+  // a mute flag, for NONE_SENTINEL) per the resolved mapping.
   const [articulationMapping, setArticulationMapping] = useState<Record<string, string>>({})
   const [status, setStatus] = useState<Status>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -135,7 +136,9 @@ export default function ApplyToMuseScoreModal({
         body: JSON.stringify({
           museScorePath,
           sfzPath: sfzFilePath,
-          partIds: Array.from(selectedPartIds)
+          partIds: Array.from(selectedPartIds),
+          articulationMapping,
+          defaultArticulationId
         })
       })
       if (!res.ok) {
@@ -285,8 +288,9 @@ export default function ApplyToMuseScoreModal({
             )}
             {status === 'done' && result && (
               <p className="import-modal__success">
-                Applied sfizz + this sfz to {result.tracksApplied} track
-                {result.tracksApplied === 1 ? '' : 's'}. Backup saved at {result.backupPath}.
+                Applied sfizz + a keyswitch-enabled copy of this sfz ({result.keyswitchSfzPath}) to{' '}
+                {result.tracksApplied} track{result.tracksApplied === 1 ? '' : 's'}. Backup saved at{' '}
+                {result.backupPath}.
               </p>
             )}
           </div>
