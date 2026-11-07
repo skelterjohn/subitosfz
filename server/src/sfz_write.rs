@@ -47,6 +47,7 @@ pub fn append_region(
     hikey: u8,
     lovel: u8,
     hivel: u8,
+    pan: i32,
     articulation_id: &str,
     articulation_label: Option<&str>
 ) -> Result<ParsedSfz, String> {
@@ -55,6 +56,9 @@ pub fn append_region(
     }
     if lovel > hivel {
         return Err(format!("lovel ({lovel}) cannot be greater than hivel ({hivel})"));
+    }
+    if !(-100..=100).contains(&pan) {
+        return Err(format!("pan ({pan}) must be between -100 and 100"));
     }
 
     // sample= is relative to the project directory (where the real file -
@@ -98,6 +102,7 @@ pub fn append_region(
     text.push_str(&format!("hikey={hikey}\n"));
     text.push_str(&format!("lovel={lovel}\n"));
     text.push_str(&format!("hivel={hivel}\n"));
+    text.push_str(&format!("pan={pan}\n"));
     text.push_str(&format!("sw_last={articulation_id}\n"));
     text.push_str(&format!("sw_label={label}\n"));
 

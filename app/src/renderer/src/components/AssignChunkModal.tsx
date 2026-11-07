@@ -54,6 +54,12 @@ export default function AssignChunkModal({
   const [hiKey, setHiKey] = useState(() => (selectedCell ? selectedCell.hiKey : 60))
   const [loVel, setLoVel] = useState(() => (selectedCell ? selectedCell.loVel : 100))
   const [hiVel, setHiVel] = useState(() => (selectedCell ? selectedCell.hiVel : 100))
+  // Not a cell-defining field (pan isn't part of CellRecord), so there's
+  // nothing sensible to prepopulate from the selected cell - always starts
+  // at center, left for the user to set (e.g. when hand-building a stereo
+  // pair, see the "left+center instead of left+right" pitfall this avoids
+  // by at least making pan a visible field instead of silently omitted).
+  const [pan, setPan] = useState(0)
   const [articulationChoice, setArticulationChoice] = useState(
     () => selectedCell?.articulation ?? existingArticulations[0]?.id ?? NEW_ARTICULATION
   )
@@ -114,8 +120,10 @@ export default function AssignChunkModal({
   const noteValid = inMidiRange(note)
   const keyRangeValid = inMidiRange(loKey) && inMidiRange(hiKey) && loKey <= hiKey
   const velRangeValid = inMidiRange(loVel) && inMidiRange(hiVel) && loVel <= hiVel
+  const panValid = Number.isInteger(pan) && pan >= -100 && pan <= 100
   const articulationValid = articulationId.length > 0
-  const canSave = noteValid && keyRangeValid && velRangeValid && articulationValid && status !== 'saving'
+  const canSave =
+    noteValid && keyRangeValid && velRangeValid && panValid && articulationValid && status !== 'saving'
 
   // Shown next to the (otherwise unexplained) disabled button - MIDI values
   // only go up to 127, which isn't obvious from a bare number input with no
@@ -127,9 +135,11 @@ export default function AssignChunkModal({
       ? 'key range must be 0-127 with lo ≤ hi'
       : !velRangeValid
         ? 'velocity range must be 0-127 with lo ≤ hi'
-        : !articulationValid
-          ? 'enter an id for the new articulation'
-          : null
+        : !panValid
+          ? 'pan must be an integer from -100 to 100'
+          : !articulationValid
+            ? 'enter an id for the new articulation'
+            : null
 
   // Not blocking - overlapping regions are valid SFZ (both sound together),
   // just usually not what was intended, so this is a heads-up rather than
@@ -159,6 +169,7 @@ export default function AssignChunkModal({
           hikey: hiKey,
           lovel: loVel,
           hivel: hiVel,
+          pan,
           articulationId,
           articulationLabel
         })
@@ -292,6 +303,20 @@ export default function AssignChunkModal({
                 onChange={(e) => setHiVel(Number(e.target.value))}
               />
               {!velRangeValid && <span className="import-modal__path">invalid</span>}
+            </div>
+          </section>
+
+          <section className="import-modal__field">
+            <span className="import-modal__label">pan</span>
+            <div className="import-modal__row">
+              <input
+                type="number"
+                min={-100}
+                max={100}
+                value={pan}
+                onChange={(e) => setPan(Number(e.target.value))}
+              />
+              {!panValid && <span className="import-modal__path">invalid</span>}
             </div>
           </section>
 

@@ -124,6 +124,7 @@ struct AddRegionRequest {
     hikey: u8,
     lovel: u8,
     hivel: u8,
+    pan: i32,
     #[serde(rename = "articulationId")]
     articulation_id: String,
     #[serde(rename = "articulationLabel")]
@@ -142,6 +143,7 @@ async fn add_region_handler(
         req.hikey,
         req.lovel,
         req.hivel,
+        req.pan,
         &req.articulation_id,
         req.articulation_label.as_deref()
     )
