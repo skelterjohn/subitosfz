@@ -12,6 +12,9 @@
 .env
 .env.local
 
+# Dev run log (redirected npm run dev output)
+dev-log.txt
+
 # OS cruft
 .DS_Store
 Thumbs.db
