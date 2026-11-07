@@ -29,3 +29,45 @@
   font-size: 0.75rem;
   white-space: nowrap;
 }
+
+.apply-musescore__articulation-list {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.apply-musescore__articulation-group + .apply-musescore__articulation-group {
+  border-top: 1px solid #ddd;
+}
+
+.apply-musescore__articulation-kind {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #f7f7f7;
+}
+
+.apply-musescore__articulation-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  border-top: 1px solid #f0f0f0;
+}
+
+.apply-musescore__articulation-label {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.apply-musescore__articulation-count {
+  color: #999;
+  font-size: 0.7rem;
+}

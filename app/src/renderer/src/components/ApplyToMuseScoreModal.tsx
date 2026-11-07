@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { AxisValue } from '../model/instrument'
 import './ImportSf2Modal.css'
 import './ApplyToMuseScoreModal.css'
 
@@ -9,9 +10,26 @@ interface MuseScoreTrack {
   currentSound: string
 }
 
+// kind distinguishes WHERE the mark was found - a notehead group (e.g. the
+// diamond head commonly used for harmonics), an <Articulation> symbol
+// (staccato, accent, up-bow, ...), or free text (a dedicated Playing
+// Technique annotation, or just a plain staff text - MuseScore doesn't
+// always use the dedicated element, and there's no reliable way to tell a
+// real technique marking apart from an unrelated rehearsal note by tag
+// alone, so every text found is listed and left for curation here).
+type ArticulationKind = 'notehead' | 'symbol' | 'text'
+
+interface ArticulationMark {
+  kind: ArticulationKind
+  id: string
+  label: string
+  count: number
+}
+
 interface MuseScoreInfo {
   formatVersion: string
   tracks: MuseScoreTrack[]
+  articulations: ArticulationMark[]
 }
 
 interface ApplyResult {
@@ -21,16 +39,34 @@ interface ApplyResult {
 
 type Status = 'idle' | 'inspecting' | 'ready' | 'applying' | 'done' | 'error'
 
+const ARTICULATION_KIND_LABELS: Record<ArticulationKind, string> = {
+  notehead: 'noteheads',
+  symbol: 'articulation symbols',
+  text: 'text markings'
+}
+const ARTICULATION_KIND_ORDER: ArticulationKind[] = ['notehead', 'symbol', 'text']
+
 interface Props {
   sfzFilePath: string
   dirty: boolean
+  existingArticulations: AxisValue[]
   onClose: () => void
 }
 
-export default function ApplyToMuseScoreModal({ sfzFilePath, dirty, onClose }: Props): React.JSX.Element {
+export default function ApplyToMuseScoreModal({
+  sfzFilePath,
+  dirty,
+  existingArticulations,
+  onClose
+}: Props): React.JSX.Element {
   const [museScorePath, setMuseScorePath] = useState<string | null>(null)
   const [info, setInfo] = useState<MuseScoreInfo | null>(null)
   const [selectedPartIds, setSelectedPartIds] = useState<Set<string>>(new Set())
+  // Keyed by `${kind}:${id}` -> the chosen sfz articulation id, or '' for
+  // unmapped (the default - leaving most marks blank is expected). Purely
+  // UI state for now: there's no backend support yet for actually acting
+  // on a mapping (injecting keyswitch notes), so Apply doesn't send this.
+  const [articulationMapping, setArticulationMapping] = useState<Record<string, string>>({})
   const [status, setStatus] = useState<Status>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [result, setResult] = useState<ApplyResult | null>(null)
@@ -42,6 +78,7 @@ export default function ApplyToMuseScoreModal({ sfzFilePath, dirty, onClose }: P
     setMuseScorePath(path)
     setInfo(null)
     setSelectedPartIds(new Set())
+    setArticulationMapping({})
     setResult(null)
     setErrorMessage(null)
     setStatus('inspecting')
@@ -113,6 +150,10 @@ export default function ApplyToMuseScoreModal({ sfzFilePath, dirty, onClose }: P
           </button>
         </div>
         <div className="import-modal__body">
+          <p className="import-modal__warning">
+            Requires sfizz (VST3) already installed and registered in MuseScore&apos;s plugin list -
+            this only points tracks at it, it doesn&apos;t install anything.
+          </p>
           {dirty && (
             <p className="import-modal__warning">
               You have unsaved changes - save first so MuseScore picks up the latest version of this
@@ -151,6 +192,55 @@ export default function ApplyToMuseScoreModal({ sfzFilePath, dirty, onClose }: P
                   </label>
                 ))}
               </div>
+            </section>
+          )}
+
+          {info && (status === 'ready' || status === 'applying' || status === 'done') && (
+            <section className="import-modal__field is-grow">
+              <span className="import-modal__label">articulations found</span>
+              {info.articulations.length === 0 && (
+                <p className="import-modal__placeholder">no articulation marks found in this piece.</p>
+              )}
+              {info.articulations.length > 0 && (
+                <div className="apply-musescore__articulation-list">
+                  {ARTICULATION_KIND_ORDER.map((kind) => {
+                    const marks = info.articulations.filter((m) => m.kind === kind)
+                    if (marks.length === 0) return null
+                    return (
+                      <div key={kind} className="apply-musescore__articulation-group">
+                        <div className="apply-musescore__articulation-kind">
+                          {ARTICULATION_KIND_LABELS[kind]}
+                        </div>
+                        {marks.map((mark) => {
+                          const key = `${mark.kind}:${mark.id}`
+                          return (
+                            <div key={key} className="apply-musescore__articulation-row">
+                              <span className="apply-musescore__articulation-label">
+                                {mark.label}
+                                <span className="apply-musescore__articulation-count">×{mark.count}</span>
+                              </span>
+                              <select
+                                value={articulationMapping[key] ?? ''}
+                                disabled={status === 'applying' || status === 'done'}
+                                onChange={(e) =>
+                                  setArticulationMapping((cur) => ({ ...cur, [key]: e.target.value }))
+                                }
+                              >
+                                <option value="">— none —</option>
+                                {existingArticulations.map((a) => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </section>
           )}
 

@@ -38,10 +38,23 @@ pub struct MuseScoreTrack {
 }
 
 #[derive(Serialize)]
+pub struct ArticulationMark {
+    // "notehead" | "symbol" | "text" - distinguishes where the mark was
+    // found (a notehead group, an <Articulation> symbol, or staff/playing
+    // technique text), since all three can produce overlapping-looking
+    // labels (e.g. a literal "pizzicato" symbol vs. the text "pizz.").
+    pub kind: String,
+    pub id: String,
+    pub label: String,
+    pub count: usize,
+}
+
+#[derive(Serialize)]
 pub struct MuseScoreInfo {
     #[serde(rename = "formatVersion")]
     pub format_version: String,
     pub tracks: Vec<MuseScoreTrack>,
+    pub articulations: Vec<ArticulationMark>,
 }
 
 #[derive(Serialize)]
@@ -133,6 +146,110 @@ fn part_labels(mscx_text: &str) -> HashMap<String, String> {
     labels
 }
 
+// "articStaccatoBelow" -> "Staccato". Above/Below/Left/Right are purely
+// placement (which side of the staff the glyph is drawn on), not a
+// different sound, so they're stripped first and merged into one mark;
+// the "artic" prefix is just MuseScore's internal naming convention.
+fn normalize_articulation_subtype(subtype: &str) -> String {
+    let mut s = subtype;
+    for suffix in ["Above", "Below", "Left", "Right", "Turned"] {
+        if let Some(stripped) = s.strip_suffix(suffix) {
+            s = stripped;
+        }
+    }
+    if let Some(stripped) = s.strip_prefix("artic") {
+        s = stripped;
+    }
+    s.to_string()
+}
+
+// "UpBow" -> "up bow" - simple camelCase-to-words for a readable label.
+fn camel_to_words(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() && i != 0 {
+            out.push(' ');
+        }
+        out.push(c.to_ascii_lowercase());
+    }
+    out
+}
+
+// Every distinct mark found in the piece that could plausibly be a
+// playing-technique switch: notehead groups other than the default
+// ("normal"), <Articulation> symbols (staccato, accent, up-bow, ...), and
+// free text found on either a dedicated Playing Technique annotation or a
+// plain staff text (MuseScore doesn't always use the dedicated element -
+// this project's own test scores use plain StaffText for "pizz."-style
+// markings too, and there's no reliable way to tell a real technique
+// marking apart from an unrelated rehearsal note like "so much" by tag
+// alone - every text mark is surfaced and left for the user to curate via
+// the mapping UI, same as the original "let the user map texts, leaving
+// many blank" plan).
+fn find_articulations(mscx_text: &str) -> Vec<ArticulationMark> {
+    let mut counts: HashMap<(&'static str, String), usize> = HashMap::new();
+    let Ok(doc) = roxmltree::Document::parse(mscx_text) else {
+        return Vec::new();
+    };
+
+    for note in doc.descendants().filter(|n| n.has_tag_name("Note")) {
+        // Most notes have no <head> element at all - its absence means
+        // "normal", the same as if it were written explicitly. Counting
+        // that case too (rather than skipping it) lets the user map
+        // "normal" to a target articulation as a deliberate assertion -
+        // e.g. "every plain notehead should use this switch" - rather than
+        // only ever being able to leave it unmapped.
+        let head = note
+            .children()
+            .find(|n| n.has_tag_name("head"))
+            .and_then(element_text)
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .unwrap_or("normal");
+        *counts.entry(("notehead", head.to_string())).or_insert(0) += 1;
+    }
+
+    for articulation in doc.descendants().filter(|n| n.has_tag_name("Articulation")) {
+        let subtype = articulation
+            .children()
+            .find(|n| n.has_tag_name("subtype"))
+            .and_then(element_text)
+            .map(str::trim);
+        if let Some(subtype) = subtype.filter(|s| !s.is_empty()) {
+            let label = camel_to_words(&normalize_articulation_subtype(subtype));
+            if !label.is_empty() {
+                *counts.entry(("symbol", label)).or_insert(0) += 1;
+            }
+        }
+    }
+
+    for annotation in doc
+        .descendants()
+        .filter(|n| n.has_tag_name("StaffText") || n.has_tag_name("PlayTechAnnotation"))
+    {
+        let text = annotation
+            .children()
+            .find(|n| n.has_tag_name("text"))
+            .and_then(element_text)
+            .map(str::trim);
+        if let Some(text) = text.filter(|t| !t.is_empty()) {
+            *counts.entry(("text", text.to_string())).or_insert(0) += 1;
+        }
+    }
+
+    let mut out: Vec<ArticulationMark> = counts
+        .into_iter()
+        .map(|((kind, label), count)| ArticulationMark {
+            kind: kind.to_string(),
+            id: label.clone(),
+            label,
+            count,
+        })
+        .collect();
+    out.sort_by(|a, b| a.kind.cmp(&b.kind).then(a.label.cmp(&b.label)));
+    out
+}
+
 // Everything that makes this "is it actually a MuseScore 4 file" - its
 // absence is also this module's required-version check, since
 // audiosettings.json is a MuseScore 4 addition (MuseScore 3 keeps sound
@@ -162,6 +279,7 @@ pub fn inspect(path: &Path) -> Result<MuseScoreInfo, String> {
         .and_then(|doc| doc.root_element().attribute("version").map(str::to_string))
         .unwrap_or_else(|| "unknown".to_string());
     let labels = part_labels(&mscx_text);
+    let articulations = find_articulations(&mscx_text);
 
     let settings: Value = serde_json::from_slice(&entries[settings_index].1)
         .map_err(|e| format!("failed to parse audiosettings.json: {e}"))?;
@@ -206,6 +324,7 @@ pub fn inspect(path: &Path) -> Result<MuseScoreInfo, String> {
     Ok(MuseScoreInfo {
         format_version,
         tracks: out,
+        articulations,
     })
 }
 

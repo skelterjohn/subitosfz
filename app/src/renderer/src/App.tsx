@@ -474,6 +474,7 @@ export default function App(): React.JSX.Element {
         <ApplyToMuseScoreModal
           sfzFilePath={sfzFilePath}
           dirty={dirty}
+          existingArticulations={instrument.articulationAxis}
           onClose={() => setApplyMuseScoreOpen(false)}
         />
       )}
