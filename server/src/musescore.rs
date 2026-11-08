@@ -14,7 +14,7 @@
 // resynthesize one with a different path/length, reload in MuseScore) both
 // on a track that already had sfizz assigned and on tracks that never had
 // (going straight from a soundfont to sfizz with no prior manual step).
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -374,7 +374,18 @@ fn random_eid() -> String {
 // no equivalent signature to distinguish "Subito added this" from a mute
 // the user set themselves by hand, so auto-removing it risks undoing the
 // user's own work - documented gap, not attempted here.
-fn remove_previous_keyswitch_staves(doc: &roxmltree::Document, edits: &mut Vec<(std::ops::Range<usize>, String)>) {
+// Returns the removed Parts' own ids too - next_part_id/next_staff_id/
+// next_midi_channel below need to exclude them from their "max so far"
+// scan, or every re-apply permanently skips the ids/channels this just
+// freed (confirmed by hand: ids 4-6 removed, next apply allocates 7-9
+// instead of reusing 4-6, and the gap only widens on each further
+// re-apply) - doc is still the pre-edit parse tree, so the stale Parts
+// are still right there to be counted unless explicitly excluded.
+fn remove_previous_keyswitch_staves(
+    doc: &roxmltree::Document,
+    edits: &mut Vec<(std::ops::Range<usize>, String)>
+) -> HashSet<String> {
+    let mut stale_part_ids = HashSet::new();
     for part in doc.descendants().filter(|n| n.has_tag_name("Part")) {
         let is_ours = part
             .descendants()
@@ -386,6 +397,7 @@ fn remove_previous_keyswitch_staves(doc: &roxmltree::Document, edits: &mut Vec<(
         }
         edits.push((part.range(), String::new()));
         if let Some(part_id) = part.attribute("id") {
+            stale_part_ids.insert(part_id.to_string());
             if let Some(staff) = doc
                 .descendants()
                 .find(|n| n.has_tag_name("Staff") && n.attribute("id") == Some(part_id))
@@ -394,20 +406,36 @@ fn remove_previous_keyswitch_staves(doc: &roxmltree::Document, edits: &mut Vec<(
             }
         }
     }
+    stale_part_ids
 }
 
-fn max_attr_value(doc: &roxmltree::Document, tag: &str, attr: &str) -> u32 {
+// Max value of an attribute across every element with the given tag,
+// ignoring values equal to one of exclude_ids - used so a stale Part/
+// Staff id about to be deleted this same apply doesn't push the next
+// allocated id past it.
+fn max_attr_value_excluding(doc: &roxmltree::Document, tag: &str, attr: &str, exclude_ids: &HashSet<String>) -> u32 {
     doc.descendants()
         .filter(|n| n.has_tag_name(tag))
         .filter_map(|n| n.attribute(attr))
+        .filter(|v| !exclude_ids.contains(*v))
         .filter_map(|v| v.parse::<u32>().ok())
         .max()
         .unwrap_or(0)
 }
 
-fn max_element_value(doc: &roxmltree::Document, tag: &str) -> u32 {
+// Same idea as max_attr_value_excluding, but for <midiChannel> - which
+// has no id of its own, so exclusion is by whether its nearest ancestor
+// <Part>'s id is stale.
+fn max_midi_channel_excluding(doc: &roxmltree::Document, exclude_part_ids: &HashSet<String>) -> u32 {
     doc.descendants()
-        .filter(|n| n.has_tag_name(tag))
+        .filter(|n| n.has_tag_name("midiChannel"))
+        .filter(|n| {
+            n.ancestors()
+                .find(|a| a.has_tag_name("Part"))
+                .and_then(|p| p.attribute("id"))
+                .map(|id| !exclude_part_ids.contains(id))
+                .unwrap_or(true)
+        })
         .filter_map(element_text)
         .filter_map(|t| t.trim().parse::<u32>().ok())
         .max()
@@ -547,7 +575,7 @@ fn inject_keyswitches(
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     let mut new_parts: Vec<(String, String)> = Vec::new();
 
-    remove_previous_keyswitch_staves(&doc, &mut edits);
+    let stale_part_ids = remove_previous_keyswitch_staves(&doc, &mut edits);
 
     let (switch_lo, switch_hi) = match (
         articulation_notes.values().copied().min(),
@@ -557,9 +585,9 @@ fn inject_keyswitches(
         _ => (0, 0), // no articulations at all - nothing to switch, loop below just does nothing
     };
 
-    let mut next_part_id = max_attr_value(&doc, "Part", "id") + 1;
-    let mut next_staff_id = max_attr_value(&doc, "Staff", "id") + 1;
-    let mut next_midi_channel = max_element_value(&doc, "midiChannel") + 1;
+    let mut next_part_id = max_attr_value_excluding(&doc, "Part", "id", &stale_part_ids) + 1;
+    let mut next_staff_id = max_attr_value_excluding(&doc, "Staff", "id", &stale_part_ids) + 1;
+    let mut next_midi_channel = max_midi_channel_excluding(&doc, &stale_part_ids) + 1;
 
     // Grouped at the end: every new Part/Staff is appended together after
     // the last existing one, not interleaved right after each
