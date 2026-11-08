@@ -168,6 +168,11 @@ export default function ApplyToMuseScoreModal({
             Requires sfizz (VST3) already installed and registered in MuseScore&apos;s plugin list -
             this only points tracks at it, it doesn&apos;t install anything.
           </p>
+          <p className="import-modal__warning">
+            This works by adding a hidden keyswitch staff per track, carrying its own copy of the
+            performance. If you edit the original notation afterward, re-apply to rewrite those
+            staves - they won&apos;t update on their own and will fall out of sync.
+          </p>
           {dirty && (
             <p className="import-modal__warning">
               You have unsaved changes - save first so MuseScore picks up the latest version of this
