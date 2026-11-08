@@ -388,6 +388,31 @@ fn count_regions(text: &str) -> usize {
     count
 }
 
+// A region's own resolved playable range, per the real SFZ engine
+// defaults (lokey defaults to 0, hikey to 127, independently) - NOT the
+// same as sfz_parse.rs's own region_key_range, which collapses a lone
+// lokey or hikey down to a single point for the UI grid's own display
+// purposes. This needs the engine-accurate wide-open range instead, since
+// it's deciding whether a region can actually sound in the reserved
+// switch zone.
+fn region_playable_range(opcodes: &[sfz_parse::OpcodeEntry]) -> (u8, u8) {
+    let find = |name: &str| {
+        opcodes
+            .iter()
+            .find(|o| o.name == name)
+            .and_then(|o| o.value.parse::<u16>().ok())
+    };
+    match (find("lokey"), find("hikey")) {
+        (Some(lo), Some(hi)) => (lo.min(127) as u8, hi.min(127) as u8),
+        (Some(lo), None) => (lo.min(127) as u8, 127),
+        (None, Some(hi)) => (0, hi.min(127) as u8),
+        (None, None) => match find("key").or_else(|| find("pitch_keycenter")) {
+            Some(k) => (k.min(127) as u8, k.min(127) as u8),
+            None => (0, 127),
+        },
+    }
+}
+
 pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz, String> {
     let parsed = sfz_parse::parse(original_sfz_path)?;
 
@@ -435,13 +460,16 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
         .map(|(i, &id)| (id, switch_lo + i as u8))
         .collect();
 
-    // Every region's resolved articulation, per sfz_parse's own cascading -
-    // no need to reimplement global/master/group inheritance here.
+    // Every region's resolved articulation and opcodes, per sfz_parse's own
+    // cascading - no need to reimplement global/master/group inheritance
+    // here.
     let mut region_articulation: HashMap<usize, &str> = HashMap::new();
+    let mut region_opcodes: HashMap<usize, &Vec<sfz_parse::OpcodeEntry>> = HashMap::new();
     for cell in &parsed.cells {
         for take in &cell.samples {
             for region in &take.regions {
                 region_articulation.insert(region.index, cell.articulation.as_str());
+                region_opcodes.insert(region.index, &region.opcodes);
             }
         }
     }
@@ -454,7 +482,35 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
         let articulation_id = region_articulation.get(&idx).copied().unwrap_or("normal");
         let note = *note_for.get(articulation_id).unwrap_or(&switch_lo);
         let offset = region_insertion_offset(&text, idx)?;
-        inserts.push((offset, format!("sw_lokey={switch_lo}\nsw_hikey={switch_hi}\nsw_last={note}\n")));
+        let mut snippet = format!("sw_lokey={switch_lo}\nsw_hikey={switch_hi}\nsw_last={note}\n");
+
+        // sw_lokey/sw_hikey only mark a trigger range - they don't stop a
+        // region whose OWN playable lokey/hikey also reaches into it from
+        // actually sounding there too (confirmed by ear: every switch note
+        // produced an audible click, a real sample firing wildly
+        // pitch-shifted at the reserved pitch). A region missing from
+        // region_opcodes (no sample=/note info - see count_regions) is
+        // unknown, so it's treated as worst-case full-range rather than
+        // silently left unclamped.
+        let (lo, hi) = region_opcodes
+            .get(&idx)
+            .map(|opcodes| region_playable_range(opcodes))
+            .unwrap_or((0, 127));
+        if switch_hi == 127 {
+            // Zone at the top (switch_lo..127) - only clamp down if this
+            // region's own high end reaches up into it; its own lo is
+            // reasserted unchanged so a single key= region doesn't
+            // accidentally widen into a range.
+            if hi >= switch_lo {
+                let clamped_hi = switch_lo.saturating_sub(1).min(hi);
+                snippet.push_str(&format!("lokey={lo}\nhikey={clamped_hi}\n"));
+            }
+        } else if lo <= switch_hi {
+            // Zone at the bottom (0..switch_hi).
+            let clamped_lo = switch_hi.saturating_add(1).max(lo);
+            snippet.push_str(&format!("lokey={clamped_lo}\nhikey={hi}\n"));
+        }
+        inserts.push((offset, snippet));
     }
     // Descending, so each splice doesn't invalidate the offsets of
     // inserts still waiting to be applied (same discipline as

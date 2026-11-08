@@ -456,7 +456,17 @@ fn duration_xml(node: roxmltree::Node, source: &str) -> String {
 // A new eid rather than copying the source Note's own XML verbatim,
 // since reusing an eid that already exists elsewhere in the file (on the
 // real, visible note) risks a duplicate-id problem.
-fn chord_notes_xml(chord: roxmltree::Node) -> String {
+//
+// Also carries over each note's own <Spanner type="Tie"> if present -
+// without it, a tied note loses the tie on this hidden copy and gets a
+// fresh attack at the second note instead of sustaining, so the mirrored
+// performance audibly re-strikes notes the real one just holds (confirmed
+// by ear). The mirrored staff has the identical rhythm as the real one,
+// so the tie's own <next>/<prev> relative-offset fractions stay valid
+// unchanged; only the <Tie> element's own eid (present on the starting
+// half, absent on the continuation half - see with_fresh_eid) needs
+// swapping for the same duplicate-eid reason as TimeSig/KeySig/Dynamic.
+fn chord_notes_xml(chord: roxmltree::Node, mscx_text: &str) -> String {
     let mut out = String::new();
     for note in chord.children().filter(|n| n.has_tag_name("Note")) {
         let pitch = note
@@ -469,7 +479,15 @@ fn chord_notes_xml(chord: roxmltree::Node) -> String {
             .find(|n| n.has_tag_name("tpc"))
             .and_then(element_text)
             .unwrap_or("14");
-        out.push_str(&format!("<Note><eid>{}</eid><pitch>{pitch}</pitch><tpc>{tpc}</tpc></Note>", random_eid()));
+        let tie = note
+            .children()
+            .find(|n| n.has_tag_name("Spanner") && n.attribute("type") == Some("Tie"))
+            .map(|n| with_fresh_eid(&mscx_text[n.range()]))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "<Note><eid>{}</eid><pitch>{pitch}</pitch><tpc>{tpc}</tpc>{tie}</Note>",
+            random_eid()
+        ));
     }
     out
 }
@@ -745,7 +763,7 @@ fn inject_keyswitches(
                         "<Chord><eid>{}</eid>{duration}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note>{}</Chord>",
                         random_eid(),
                         random_eid(),
-                        chord_notes_xml(child)
+                        chord_notes_xml(child, mscx_text)
                     ));
                 }
             }
