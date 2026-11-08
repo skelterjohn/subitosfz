@@ -430,9 +430,17 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
     }
     let n16 = n as u16;
 
-    // Prefer the TOP of the MIDI range (127 downward) - virtually no real
-    // instrument plays there, unlike the bottom, which a low bass/
-    // extended-range instrument's own real notes could collide with.
+    // Prefer the BOTTOM of the MIDI range (0 upward) - the switch note
+    // and its chord's real note(s) are stacked into one simultaneous
+    // Chord, and simultaneous notes apparently don't dispatch in document
+    // order (confirmed by ear: the switch consistently landed after the
+    // note it was meant to affect, with the switch note previously placed
+    // at the TOP of the range - i.e. the chord's highest pitch). Pitch-
+    // ascending dispatch would explain that exactly, so the switch note
+    // is now the chord's LOWEST pitch instead, to fire first. Falls back
+    // to the top of the range only if the bottom has no room - a low
+    // bass/extended-range instrument's own real notes are more likely to
+    // collide there than at the very top.
     //
     // Deliberately uses the cells' own recorded ANCHOR pitches
     // (region_note() in sfz_parse.rs - what a sample was actually
@@ -444,10 +452,10 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
     // realistic multi-sampled instrument report "no room" immediately.
     let lo_bound = parsed.cells.iter().map(|c| c.note).min();
     let hi_bound = parsed.cells.iter().map(|c| c.note).max();
-    let (switch_lo, switch_hi): (u8, u8) = if hi_bound.map(|hi| (hi as u16) < 128 - n16).unwrap_or(true) {
-        ((128 - n16) as u8, 127)
-    } else if lo_bound.map(|lo| (lo as u16) >= n16).unwrap_or(true) {
+    let (switch_lo, switch_hi): (u8, u8) = if lo_bound.map(|lo| (lo as u16) >= n16).unwrap_or(true) {
         (0, (n16 - 1) as u8)
+    } else if hi_bound.map(|hi| (hi as u16) < 128 - n16).unwrap_or(true) {
+        ((128 - n16) as u8, 127)
     } else {
         return Err(
             "no room for a keyswitch zone - this instrument already uses the full MIDI range".to_string()

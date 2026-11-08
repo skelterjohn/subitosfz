@@ -478,6 +478,25 @@ fn duration_xml(node: roxmltree::Node, source: &str) -> String {
     out
 }
 
+// The grace-note type marker on a Chord, if it's itself a grace note -
+// a self-closing tag like <grace32/> (or <appoggiatura/>/<acciaccatura/>,
+// MuseScore's other grace-note spellings), always a sibling of
+// durationType/Note rather than nested in either. This is what tells
+// MuseScore the chord consumes no real measure duration regardless of
+// its nominal durationType - dropping it when mirroring a chord that
+// carries one is what corrupted the file (see the call site's comment).
+fn grace_marker_xml<'a>(chord: roxmltree::Node, source: &'a str) -> Option<&'a str> {
+    chord
+        .children()
+        .find(|n| {
+            n.is_element()
+                && (n.tag_name().name().starts_with("grace")
+                    || n.tag_name().name() == "appoggiatura"
+                    || n.tag_name().name() == "acciaccatura")
+        })
+        .map(|n| &source[n.range()])
+}
+
 // Fresh <Note> elements (new eid each, not the original's) carrying just
 // pitch+tpc from a real Chord's own notes - used to copy the actual
 // performance onto the hidden keyswitch staff alongside the switch note.
@@ -767,13 +786,26 @@ fn inject_keyswitches(
                         .or_else(|| default_resolved.clone())
                         .unwrap_or_else(|| "normal".to_string());
                     let duration = duration_xml(child, mscx_text);
+                    // Whether the SOURCE chord is itself a grace note -
+                    // confirmed the hard way that this isn't optional:
+                    // mirroring a source grace note without its own marker
+                    // (counting it as a real timed note instead) corrupted
+                    // the file outright ("Incomplete measure... Found
+                    // 41/32, Expected 5/4" - exactly the 1/32 excess of one
+                    // unmarked 32nd grace note).
+                    let grace_marker = grace_marker_xml(child, mscx_text);
 
                     if resolved == NONE_SENTINEL {
                         // The real staff is muted at the Mixer level (see
                         // apply()), so there's nothing to silence there
                         // anymore - this chord just contributes no sound
-                        // at all on the hidden (audible) staff either.
-                        staff_body.push_str(&format!("<Rest><eid>{}</eid>{duration}</Rest>", random_eid()));
+                        // at all on the hidden (audible) staff either. A
+                        // silenced grace note gets nothing at all, not even
+                        // a Rest - the original consumed no real measure
+                        // time either, and a Rest standing in for it would.
+                        if grace_marker.is_none() {
+                            staff_body.push_str(&format!("<Rest><eid>{}</eid>{duration}</Rest>", random_eid()));
+                        }
                         continue;
                     }
 
@@ -781,15 +813,28 @@ fn inject_keyswitches(
                         return Err(format!("no reserved keyswitch note for articulation \"{resolved}\""));
                     };
                     let tpc = TPC_BY_CHROMA[(note_number % 12) as usize];
-                    // This chord carries BOTH the keyswitch trigger AND a
-                    // fresh copy of the real note(s) - the switch and the
-                    // sound it affects now live in the same chord, on the
-                    // same staff/plugin instance, exactly like the
-                    // original same-staff design that was confirmed
-                    // working by ear - just moved to a staff nobody sees.
+                    // A separate grace-note Chord for the switch trigger
+                    // was tried and reverted: a grace note doesn't consume
+                    // notated measure duration, but it DOES consume real
+                    // playback time, and since the switch note itself is
+                    // silent by design (see build_keyswitch_variant's
+                    // region-range clamping), that stolen sliver of time
+                    // played back as an audible gap before every single
+                    // note (confirmed by ear - "a 32nd of rest before each
+                    // note"). Back to one simultaneous Chord instead, with
+                    // the switch Note placed first/lowest-pitched -
+                    // build_keyswitch_variant now reserves the BOTTOM of
+                    // the MIDI range rather than the top, on the theory
+                    // that simultaneous notes dispatch in pitch-ascending
+                    // order rather than document order (confirmed by ear
+                    // that document order alone, with the switch note
+                    // previously at the chord's highest pitch, consistently
+                    // fired the switch after the note it was meant to
+                    // affect).
                     staff_body.push_str(&format!(
-                        "<Chord><eid>{}</eid>{duration}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note>{}</Chord>",
+                        "<Chord><eid>{}</eid>{duration}{}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note>{}</Chord>",
                         random_eid(),
+                        grace_marker.unwrap_or(""),
                         random_eid(),
                         chord_notes_xml(child, mscx_text)
                     ));
