@@ -12,6 +12,8 @@ declare global {
       quitApp: () => Promise<void>
       newWindow: () => Promise<void>
       shouldAutoReopen: () => Promise<boolean>
+      openGitHubRepo: () => Promise<void>
+      openGitHubIssues: () => Promise<void>
       getServerPort: () => Promise<number>
       getStartTime: () => Promise<number>
       getWorkingSfzPath: (originalPath: string) => Promise<string>
@@ -35,6 +37,7 @@ declare global {
       onMenuSaveAs: (callback: () => void) => () => void
       onMenuDiscard: (callback: () => void) => () => void
       onMenuApplyMuseScore: (callback: () => void) => () => void
+      onMenuAbout: (callback: () => void) => () => void
     }
   }
 }

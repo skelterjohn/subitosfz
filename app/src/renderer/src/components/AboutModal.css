@@ -1,0 +1,9 @@
+.about-modal__body {
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.about-modal__version {
+  color: #888;
+  font-size: 0.75rem;
+}

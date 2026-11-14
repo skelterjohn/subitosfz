@@ -6,6 +6,7 @@ import ImportSf2Modal from './components/ImportSf2Modal'
 import ImportRecordingModal from './components/ImportRecordingModal'
 import AssignChunkModal from './components/AssignChunkModal'
 import ApplyToMuseScoreModal from './components/ApplyToMuseScoreModal'
+import AboutModal from './components/AboutModal'
 import ChunkDrawer from './components/ChunkDrawer'
 import SampleEditorPanel from './components/SampleEditorPanel'
 import SampleTakeList from './components/SampleTakeList'
@@ -53,6 +54,7 @@ export default function App(): React.JSX.Element {
   const [importOpen, setImportOpen] = useState(false)
   const [newInstrumentOpen, setNewInstrumentOpen] = useState(false)
   const [applyMuseScoreOpen, setApplyMuseScoreOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [sfzFilePath, setSfzFilePath] = useState<string | null>(null)
   const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
@@ -350,6 +352,7 @@ export default function App(): React.JSX.Element {
     const offApplyMuseScore = window.api.onMenuApplyMuseScore(() => {
       requestApplyToMuseScore()
     })
+    const offAbout = window.api.onMenuAbout(() => setAboutOpen(true))
     return () => {
       offNew()
       offImport()
@@ -358,6 +361,7 @@ export default function App(): React.JSX.Element {
       offSave()
       offSaveAs()
       offDiscard()
+      offAbout()
       offApplyMuseScore()
     }
   }, [sfzFilePath, workingPath, dirty])
@@ -443,7 +447,7 @@ export default function App(): React.JSX.Element {
           outer wrapper instead - otherwise TopMenuBar would fall back to
           the browser default font instead of matching the rest of the app. */}
       <TopMenuBar
-        actions={{
+        fileActions={{
           onNewWindow: () => window.api.newWindow(),
           onNew: requestNewInstrument,
           onImportSf2: () => setImportOpen(true),
@@ -453,6 +457,11 @@ export default function App(): React.JSX.Element {
           onSaveAs: () => console.log('[menu] save as requested - not implemented yet'),
           onDiscardChanges: discardChanges,
           onApplyToMuseScore: requestApplyToMuseScore
+        }}
+        helpActions={{
+          onGitHubRepo: () => window.api.openGitHubRepo(),
+          onGitHubIssues: () => window.api.openGitHubIssues(),
+          onAbout: () => setAboutOpen(true)
         }}
       />
       <div
@@ -485,6 +494,7 @@ export default function App(): React.JSX.Element {
         />
       )}
       {importOpen && <ImportSf2Modal onClose={() => setImportOpen(false)} />}
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
       {importRecordingOpen && (
         <ImportRecordingModal
           sfzFilePath={sfzFilePath}

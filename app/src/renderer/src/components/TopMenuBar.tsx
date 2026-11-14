@@ -36,12 +36,22 @@ export interface FileMenuActions {
   onApplyToMuseScore: () => void
 }
 
-interface Props {
-  actions: FileMenuActions
+export interface HelpMenuActions {
+  onGitHubRepo: () => void
+  onGitHubIssues: () => void
+  onAbout: () => void
 }
 
-export default function TopMenuBar({ actions }: Props): React.JSX.Element | null {
-  const [openMenu, setOpenMenu] = useState<'file' | null>(null)
+interface Props {
+  fileActions: FileMenuActions
+  helpActions: HelpMenuActions
+}
+
+export default function TopMenuBar({ fileActions, helpActions }: Props): React.JSX.Element | null {
+  // Menu id (not just 'file') since there's now more than one top-level
+  // menu - generalized here rather than one boolean per menu, since the
+  // original File-only comment already anticipated more menus arriving.
+  const [openMenu, setOpenMenu] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
 
   // Closes on an outside click/Escape - the two ways a native dropdown
@@ -74,69 +84,85 @@ export default function TopMenuBar({ actions }: Props): React.JSX.Element | null
       type: 'item',
       label: 'New Window',
       accelerator: 'Ctrl+Shift+N',
-      onClick: () => runAndClose(actions.onNewWindow)
+      onClick: () => runAndClose(fileActions.onNewWindow)
     },
     { type: 'separator' },
-    { type: 'item', label: 'New…', accelerator: 'Ctrl+N', onClick: () => runAndClose(actions.onNew) },
-    { type: 'item', label: 'Import SF2/SF3…', onClick: () => runAndClose(actions.onImportSf2) },
-    { type: 'item', label: 'Import Audio…', onClick: () => runAndClose(actions.onImportAudio) },
-    { type: 'item', label: 'Open…', accelerator: 'Ctrl+O', onClick: () => runAndClose(actions.onOpen) },
+    { type: 'item', label: 'New…', accelerator: 'Ctrl+N', onClick: () => runAndClose(fileActions.onNew) },
+    { type: 'item', label: 'Import SF2/SF3…', onClick: () => runAndClose(fileActions.onImportSf2) },
+    { type: 'item', label: 'Import Audio…', onClick: () => runAndClose(fileActions.onImportAudio) },
+    { type: 'item', label: 'Open…', accelerator: 'Ctrl+O', onClick: () => runAndClose(fileActions.onOpen) },
     { type: 'separator' },
-    { type: 'item', label: 'Save', accelerator: 'Ctrl+S', onClick: () => runAndClose(actions.onSave) },
+    { type: 'item', label: 'Save', accelerator: 'Ctrl+S', onClick: () => runAndClose(fileActions.onSave) },
     {
       type: 'item',
       label: 'Save As…',
       accelerator: 'Ctrl+Shift+S',
-      onClick: () => runAndClose(actions.onSaveAs)
+      onClick: () => runAndClose(fileActions.onSaveAs)
     },
-    { type: 'item', label: 'Discard Changes', onClick: () => runAndClose(actions.onDiscardChanges) },
+    { type: 'item', label: 'Discard Changes', onClick: () => runAndClose(fileActions.onDiscardChanges) },
     { type: 'separator' },
     {
       type: 'item',
       label: 'Apply to MuseScore…',
-      onClick: () => runAndClose(actions.onApplyToMuseScore)
+      onClick: () => runAndClose(fileActions.onApplyToMuseScore)
     },
     { type: 'separator' },
     { type: 'item', label: 'Quit', accelerator: 'Ctrl+Q', onClick: () => runAndClose(() => window.api.quitApp()) }
   ]
 
+  const helpEntries: MenuEntry[] = [
+    { type: 'item', label: 'GitHub Repository', onClick: () => runAndClose(helpActions.onGitHubRepo) },
+    { type: 'item', label: 'Report an Issue', onClick: () => runAndClose(helpActions.onGitHubIssues) },
+    { type: 'separator' },
+    { type: 'item', label: 'About Subito sfz', onClick: () => runAndClose(helpActions.onAbout) }
+  ]
+
+  const menus: { id: string; label: string; entries: MenuEntry[] }[] = [
+    { id: 'file', label: 'File', entries: fileEntries },
+    { id: 'help', label: 'Help', entries: helpEntries }
+  ]
+
   return (
     <div className="top-menu-bar" ref={containerRef}>
       <img className="top-menu-bar__icon" src={appIconUrl} alt="" />
-      <button
-        type="button"
-        className={`top-menu-bar__label ${openMenu === 'file' ? 'is-open' : ''}`}
-        onClick={() => setOpenMenu((v) => (v === 'file' ? null : 'file'))}
-      >
-        File
-      </button>
+      {menus.map((menu) => (
+        <div key={menu.id} className="top-menu-bar__menu">
+          <button
+            type="button"
+            className={`top-menu-bar__label ${openMenu === menu.id ? 'is-open' : ''}`}
+            onClick={() => setOpenMenu((v) => (v === menu.id ? null : menu.id))}
+          >
+            {menu.label}
+          </button>
+          {openMenu === menu.id && (
+            <div className="top-menu-bar__dropdown">
+              {menu.entries.map((entry, i) =>
+                entry.type === 'separator' ? (
+                  <div key={i} className="top-menu-bar__separator" />
+                ) : (
+                  <button
+                    key={entry.label}
+                    type="button"
+                    className="top-menu-bar__item"
+                    onClick={entry.onClick}
+                  >
+                    <span>{entry.label}</span>
+                    {entry.accelerator && (
+                      <span className="top-menu-bar__accelerator">{entry.accelerator}</span>
+                    )}
+                  </button>
+                )
+              )}
+            </div>
+          )}
+        </div>
+      ))}
       {/* On Windows there's no native title bar left at all (titleBarStyle
           'hidden' in main/index.ts) - this is the only place a window
           title shows up now. Static text, not the open file's path (that
           already has its own row further down) - just enough to still
           read as "a title bar" at a glance. */}
       <span className="top-menu-bar__title">subito sfz</span>
-      {openMenu === 'file' && (
-        <div className="top-menu-bar__dropdown">
-          {fileEntries.map((entry, i) =>
-            entry.type === 'separator' ? (
-              <div key={i} className="top-menu-bar__separator" />
-            ) : (
-              <button
-                key={entry.label}
-                type="button"
-                className="top-menu-bar__item"
-                onClick={entry.onClick}
-              >
-                <span>{entry.label}</span>
-                {entry.accelerator && (
-                  <span className="top-menu-bar__accelerator">{entry.accelerator}</span>
-                )}
-              </button>
-            )
-          )}
-        </div>
-      )}
     </div>
   )
 }

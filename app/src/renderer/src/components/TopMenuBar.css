@@ -42,6 +42,16 @@
   pointer-events: none;
 }
 
+/* Wraps one button + its dropdown - gives the dropdown below a positioning
+   context of its own (anchored under THIS button) instead of always the
+   whole bar's left edge, now that there's more than one menu. display:
+   flex (not just a plain block) so the label's align-self: stretch below
+   still has a flex container to stretch within. */
+.top-menu-bar__menu {
+  position: relative;
+  display: flex;
+}
+
 .top-menu-bar__label {
   -webkit-app-region: no-drag;
   align-self: stretch;

@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  shell,
+  type MenuItemConstructorOptions
+} from 'electron'
 import { basename, dirname, join, relative } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
@@ -10,6 +19,12 @@ import windowStateKeeper from 'electron-window-state'
 // performance.timeOrigin is the epoch time the Node/Electron process itself
 // started, which is earlier (and more honest) than Date.now() taken here.
 const appStartTime = performance.timeOrigin
+
+// Single source of truth for the Help menu's links - TopMenuBar.tsx's own
+// equivalent items go through dedicated IPC calls below rather than
+// knowing these URLs themselves.
+const GITHUB_REPO_URL = 'https://github.com/skelterjohn/subitosfz'
+const GITHUB_ISSUES_URL = 'https://github.com/skelterjohn/subitosfz/issues'
 
 let serverProcess: ChildProcess | null = null
 let serverPort: number | null = null
@@ -210,7 +225,19 @@ function buildMenu(): Menu {
       { role: 'quit', accelerator: 'CmdOrCtrl+Q' }
     ]
   }
-  return Menu.buildFromTemplate([fileMenu])
+  const helpMenu: MenuItemConstructorOptions = {
+    label: 'Help',
+    submenu: [
+      { label: 'GitHub Repository', click: () => shell.openExternal(GITHUB_REPO_URL) },
+      { label: 'Report an Issue', click: () => shell.openExternal(GITHUB_ISSUES_URL) },
+      { type: 'separator' },
+      {
+        label: 'About Subito sfz',
+        click: () => focusedWindow()?.webContents.send('menu-about')
+      }
+    ]
+  }
+  return Menu.buildFromTemplate([fileMenu, helpMenu])
 }
 
 async function createWindow(autoReopen: boolean): Promise<void> {
@@ -298,6 +325,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('new-window', () => {
     createWindow(false)
   })
+
+  // TopMenuBar.tsx's own Help menu items - the native menu's equivalent
+  // items call shell.openExternal directly (see buildMenu above), since
+  // they're already running in the main process.
+  ipcMain.handle('open-github-repo', () => shell.openExternal(GITHUB_REPO_URL))
+  ipcMain.handle('open-github-issues', () => shell.openExternal(GITHUB_ISSUES_URL))
 
   // Asked once by App.tsx's startup effect to decide whether to auto-load
   // the last session's sfz - true only for the one window that was
