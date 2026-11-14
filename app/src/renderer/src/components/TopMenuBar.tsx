@@ -25,6 +25,7 @@ interface SeparatorEntry {
 type MenuEntry = MenuItemEntry | SeparatorEntry
 
 export interface FileMenuActions {
+  onNewWindow: () => void
   onNew: () => void
   onImportSf2: () => void
   onImportAudio: () => void
@@ -69,6 +70,13 @@ export default function TopMenuBar({ actions }: Props): React.JSX.Element | null
   }
 
   const fileEntries: MenuEntry[] = [
+    {
+      type: 'item',
+      label: 'New Window',
+      accelerator: 'Ctrl+Shift+N',
+      onClick: () => runAndClose(actions.onNewWindow)
+    },
+    { type: 'separator' },
     { type: 'item', label: 'New…', accelerator: 'Ctrl+N', onClick: () => runAndClose(actions.onNew) },
     { type: 'item', label: 'Import SF2/SF3…', onClick: () => runAndClose(actions.onImportSf2) },
     { type: 'item', label: 'Import Audio…', onClick: () => runAndClose(actions.onImportAudio) },

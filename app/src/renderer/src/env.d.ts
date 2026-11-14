@@ -10,6 +10,8 @@ declare global {
       // Node ambient types, to avoid leaking Node globals into browser code.
       platform: string
       quitApp: () => Promise<void>
+      newWindow: () => Promise<void>
+      shouldAutoReopen: () => Promise<boolean>
       getServerPort: () => Promise<number>
       getStartTime: () => Promise<number>
       getWorkingSfzPath: (originalPath: string) => Promise<string>

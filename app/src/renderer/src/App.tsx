@@ -300,11 +300,17 @@ export default function App(): React.JSX.Element {
   }, [])
 
   // Reopen whatever .sfz was last successfully loaded, so the grid isn't
-  // empty on every fresh launch.
+  // empty on every fresh launch - but only in the one "primary" window
+  // (see main/index.ts's autoReopenWindowIds). A window opened via File >
+  // New Window starts blank on purpose, so it's free to open a different
+  // sfz without disturbing whatever the original window has open.
   useEffect(() => {
     if (!window.api) return
-    window.api.getLastSfzFile().then((path) => {
-      if (path) loadSfzFile(path)
+    window.api.shouldAutoReopen().then((should) => {
+      if (!should) return
+      window.api.getLastSfzFile().then((path) => {
+        if (path) loadSfzFile(path)
+      })
     })
   }, [])
 
@@ -438,6 +444,7 @@ export default function App(): React.JSX.Element {
           the browser default font instead of matching the rest of the app. */}
       <TopMenuBar
         actions={{
+          onNewWindow: () => window.api.newWindow(),
           onNew: requestNewInstrument,
           onImportSf2: () => setImportOpen(true),
           onImportAudio: () => setImportRecordingOpen(true),

@@ -13,7 +13,26 @@ const appStartTime = performance.timeOrigin
 
 let serverProcess: ChildProcess | null = null
 let serverPort: number | null = null
-let mainWindow: BrowserWindow | null = null
+
+// Windows opened via File > New Window start blank (see App.tsx's startup
+// effect, gated on should-auto-reopen below) - only the one true "primary"
+// window (app launch, or macOS's 'activate' recreating one when none are
+// left) auto-reopens the last session's sfz. Tracked by window id since
+// there's no longer a single global "the window" once more than one can
+// exist at a time.
+const autoReopenWindowIds = new Set<number>()
+let secondaryWindowCascade = 0
+
+// Menu click handlers and dialogs need *a* window to target. For the
+// former (the one static Menu, shared by every window), that's whichever
+// window currently has focus; for the latter (an ipcMain.handle call),
+// it's always resolved via BrowserWindow.fromWebContents(event.sender)
+// instead - the window that actually asked, not "whichever has focus",
+// since the two aren't necessarily the same by the time an async dialog
+// result comes back.
+function focusedWindow(): BrowserWindow | null {
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null
+}
 
 // Must match TopMenuBar.css's `.top-menu-bar` height exactly - this is the
 // window's native titleBarOverlay caption-button strip (Windows only), the
@@ -139,42 +158,53 @@ function buildMenu(): Menu {
     label: 'File',
     submenu: [
       {
+        label: 'New Window',
+        accelerator: 'CmdOrCtrl+Shift+N',
+        // Unlike every other item here, this doesn't forward to the
+        // renderer at all - opening a window is main-process-only, and
+        // there's no existing window to ask (the new one is the point).
+        click: () => {
+          createWindow(false)
+        }
+      },
+      { type: 'separator' },
+      {
         label: 'New…',
         accelerator: 'CmdOrCtrl+N',
-        click: () => mainWindow?.webContents.send('menu-new')
+        click: () => focusedWindow()?.webContents.send('menu-new')
       },
       {
         label: 'Import SF2/SF3…',
-        click: () => mainWindow?.webContents.send('menu-import')
+        click: () => focusedWindow()?.webContents.send('menu-import')
       },
       {
         label: 'Import Audio…',
-        click: () => mainWindow?.webContents.send('menu-import-recording')
+        click: () => focusedWindow()?.webContents.send('menu-import-recording')
       },
       {
         label: 'Open…',
         accelerator: 'CmdOrCtrl+O',
-        click: () => mainWindow?.webContents.send('menu-open')
+        click: () => focusedWindow()?.webContents.send('menu-open')
       },
       { type: 'separator' },
       {
         label: 'Save',
         accelerator: 'CmdOrCtrl+S',
-        click: () => mainWindow?.webContents.send('menu-save')
+        click: () => focusedWindow()?.webContents.send('menu-save')
       },
       {
         label: 'Save As…',
         accelerator: 'CmdOrCtrl+Shift+S',
-        click: () => mainWindow?.webContents.send('menu-save-as')
+        click: () => focusedWindow()?.webContents.send('menu-save-as')
       },
       {
         label: 'Discard Changes',
-        click: () => mainWindow?.webContents.send('menu-discard')
+        click: () => focusedWindow()?.webContents.send('menu-discard')
       },
       { type: 'separator' },
       {
         label: 'Apply to MuseScore…',
-        click: () => mainWindow?.webContents.send('menu-apply-musescore')
+        click: () => focusedWindow()?.webContents.send('menu-apply-musescore')
       },
       { type: 'separator' },
       { role: 'quit', accelerator: 'CmdOrCtrl+Q' }
@@ -183,19 +213,24 @@ function buildMenu(): Menu {
   return Menu.buildFromTemplate([fileMenu])
 }
 
-async function createWindow(): Promise<void> {
-  // Persists/restores window position+size (and maximized state) across
-  // launches, in a JSON file under app.getPath('userData').
-  const windowState = windowStateKeeper({
-    defaultWidth: 1000,
-    defaultHeight: 700
-  })
+async function createWindow(autoReopen: boolean): Promise<void> {
+  // Only the one true "primary" window (app launch, or macOS's 'activate'
+  // recreating one when none are left) persists/restores its position and
+  // size across launches (electron-window-state's JSON file under
+  // app.getPath('userData') has no per-window identity, so sharing it
+  // across several open windows would just make them fight over the same
+  // saved state). A window opened via File > New Window skips that
+  // entirely and starts at a small cascading offset instead, so repeated
+  // New Windows don't stack exactly on top of each other or of the
+  // primary window.
+  const windowState = autoReopen ? windowStateKeeper({ defaultWidth: 1000, defaultHeight: 700 }) : null
+  const cascade = autoReopen ? 0 : ++secondaryWindowCascade * 32
 
   const win = new BrowserWindow({
-    x: windowState.x,
-    y: windowState.y,
-    width: windowState.width,
-    height: windowState.height,
+    x: windowState ? windowState.x : 80 + cascade,
+    y: windowState ? windowState.y : 80 + cascade,
+    width: windowState?.width ?? 1000,
+    height: windowState?.height ?? 700,
     icon: nativeImage.createFromPath(appIconPath()),
     // On Windows, TopMenuBar.tsx itself IS the title bar - no native frame
     // at all above it. titleBarStyle 'hidden' removes both the OS title
@@ -226,8 +261,12 @@ async function createWindow(): Promise<void> {
     }
   })
 
-  windowState.manage(win)
-  mainWindow = win
+  windowState?.manage(win)
+  if (autoReopen) {
+    const winId = win.id
+    autoReopenWindowIds.add(winId)
+    win.on('closed', () => autoReopenWindowIds.delete(winId))
+  }
 
   // Linux fallback: no titleBarOverlay, so the native frame stays, but the
   // classic File/Edit row is still redundant with TopMenuBar.tsx - hide it.
@@ -252,14 +291,32 @@ app.whenReady().then(async () => {
   // without any IPC round trip.
   ipcMain.handle('quit-app', () => app.quit())
 
+  // Same story as Quit above - TopMenuBar.tsx's own "New Window" item has
+  // to ask main to do this (a renderer can't create a BrowserWindow
+  // itself); the native menu's equivalent item calls createWindow directly
+  // since it's already running in the main process.
+  ipcMain.handle('new-window', () => {
+    createWindow(false)
+  })
+
+  // Asked once by App.tsx's startup effect to decide whether to auto-load
+  // the last session's sfz - true only for the one window that was
+  // launched as "primary" (see autoReopenWindowIds above), never for one
+  // opened via New Window.
+  ipcMain.handle('should-auto-reopen', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    return win ? autoReopenWindowIds.has(win.id) : false
+  })
+
   ipcMain.handle('get-server-port', () => serverPort)
   ipcMain.handle('get-start-time', () => appStartTime)
   ipcMain.handle('get-working-sfz-path', (_event, originalPath: string) => workingSfzPath(originalPath))
 
-  ipcMain.handle('choose-sf2-file', async () => {
-    if (!mainWindow) return null
+  ipcMain.handle('choose-sf2-file', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
     const dirs = loadImportDirs()
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       title: 'Choose a SoundFont',
       defaultPath: dirs.lastSf2Dir,
       properties: ['openFile'],
@@ -271,10 +328,11 @@ app.whenReady().then(async () => {
     return filePath
   })
 
-  ipcMain.handle('choose-sfz-file', async () => {
-    if (!mainWindow) return null
+  ipcMain.handle('choose-sfz-file', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
     const dirs = loadImportDirs()
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       title: 'Open an SFZ file',
       defaultPath: dirs.lastSfzDir,
       properties: ['openFile'],
@@ -319,10 +377,11 @@ app.whenReady().then(async () => {
       .map((entry) => relative(dirPath, join(entry.parentPath, entry.name)).replace(/\\/g, '/'))
   })
 
-  ipcMain.handle('choose-audio-file', async () => {
-    if (!mainWindow) return null
+  ipcMain.handle('choose-audio-file', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
     const dirs = loadImportDirs()
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       title: 'Choose an audio file',
       defaultPath: dirs.lastRecordingDir,
       properties: ['openFile'],
@@ -339,10 +398,11 @@ app.whenReady().then(async () => {
     await unlink(fullPath)
   })
 
-  ipcMain.handle('choose-musescore-file', async () => {
-    if (!mainWindow) return null
+  ipcMain.handle('choose-musescore-file', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
     const dirs = loadImportDirs()
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       title: 'Choose a MuseScore file',
       defaultPath: dirs.lastMuseScoreDir,
       properties: ['openFile'],
@@ -354,10 +414,11 @@ app.whenReady().then(async () => {
     return filePath
   })
 
-  ipcMain.handle('choose-directory', async () => {
-    if (!mainWindow) return null
+  ipcMain.handle('choose-directory', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return null
     const dirs = loadImportDirs()
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       title: 'Choose a destination folder',
       defaultPath: dirs.lastDestDir,
       properties: ['openDirectory', 'createDirectory']
@@ -381,10 +442,10 @@ app.whenReady().then(async () => {
     console.error('[main] sidecar health check failed:', err)
   }
 
-  await createWindow()
+  await createWindow(true)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(true)
   })
 })
 

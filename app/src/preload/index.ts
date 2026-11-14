@@ -16,6 +16,8 @@ const api = {
   // self-drawn one instead - see TopMenuBar.tsx.
   platform: process.platform,
   quitApp: (): Promise<void> => ipcRenderer.invoke('quit-app'),
+  newWindow: (): Promise<void> => ipcRenderer.invoke('new-window'),
+  shouldAutoReopen: (): Promise<boolean> => ipcRenderer.invoke('should-auto-reopen'),
   getServerPort: (): Promise<number> => ipcRenderer.invoke('get-server-port'),
   getStartTime: (): Promise<number> => ipcRenderer.invoke('get-start-time'),
   getWorkingSfzPath: (originalPath: string): Promise<string> =>
