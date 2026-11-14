@@ -9,8 +9,9 @@ interface Props {
   onDeleteRegion: (regionIndex: number) => Promise<void>
   // Converts every take in the current cell (whatever that is, from the
   // caller's own perspective - this component doesn't pass anything back,
-  // the cell it's already been given is the group) into round-robin -
-  // seq_length/seq_position, not something this component computes itself.
+  // the cell it's already been given is the group) into random-selection
+  // round-robin via lorand/hirand - not something this component computes
+  // itself, see App.tsx's splitCellIntoRoundRobin.
   onSplitRoundRobin: () => Promise<void>
 }
 
@@ -462,7 +463,7 @@ export default function SampleTakeList({
             onSetOpcode={onSetOpcode}
             onDeleteRegion={onDeleteRegion}
             // True only while some take still bundles more than one region
-            // together (no seq_position yet distinguishing them - see
+            // together (no lorand/hirand yet distinguishing them - see
             // App.tsx's splitCellIntoRoundRobin). Once every take has
             // exactly one region, the cell's already fully split - there's
             // nothing left to break apart, even though the cell as a whole
@@ -639,7 +640,7 @@ function TakeItem({
             className="sample-take-list__split"
             onClick={onSplit}
             disabled={splitting}
-            title="Split every region in this cell into round-robin (seq_length/seq_position)"
+            title="Split every region in this cell into round-robin (random selection via lorand/hirand)"
             aria-label="Split into round-robin"
           >
             split

@@ -211,23 +211,34 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  // Converts every region sharing a cell - which, with no seq_position
+  // Converts every region sharing a cell - which, with no lorand/hirand
   // set, all fire together on one note-on - into round-robin: each region
-  // gets seq_length = (region count) and a distinct seq_position, in the
-  // same top-to-bottom/left-to-right order the take list already shows
-  // them in. Deliberately per-REGION, not per-take: until seq_position
-  // (or lorand/hirand/trigger) exists, sfz_parse.rs's sound_identity has
-  // no way to tell a stereo pair's two mic channels apart from two
-  // distinct round-robin recordings - same-criteria regions with no such
-  // opcode just collapse into one take, however many of them there are.
-  // That's exactly the state this button exists to break apart, so "the
-  // group" has to mean every raw region currently in the cell, not
-  // however many takes they happen to already be bucketed into - this
-  // will also split apart a genuine same-cell stereo pair if one exists,
-  // since nothing in the data distinguishes that case from this one
-  // (see the deferred region-grouping note for the real fix).
-  // Re-running this always resets to a clean 1..N sequence in current
-  // order, so it's safe to click again after adding another region.
+  // gets an equal slice of the 0..1 random range sfizz/ARIA-style engines
+  // roll fresh on every trigger (region i gets [i/N, (i+1)/N), the last
+  // one's hirand pinned to exactly "1" rather than a rounded fraction so
+  // the very top of the range is never left unmatched), in the same
+  // top-to-bottom/left-to-right order the take list already shows them
+  // in. Random rather than seq_length/seq_position's strict cycling - see
+  // the chat for why that's what's actually wanted here. Also pins
+  // seq_length/seq_position to 1/1 (a no-op combination - a region always
+  // matches its own single-slot cycle) on every region, in case an
+  // earlier version of this feature already left round-robin opcodes on
+  // them; leaving both schemes active at once would AND them together
+  // instead of cleanly replacing one with the other.
+  //
+  // Deliberately per-REGION, not per-take: until lorand/hirand (or
+  // seq_position/trigger) exists, sfz_parse.rs's sound_identity has no
+  // way to tell a stereo pair's two mic channels apart from two distinct
+  // round-robin recordings - same-criteria regions with no such opcode
+  // just collapse into one take, however many of them there are. That's
+  // exactly the state this button exists to break apart, so "the group"
+  // has to mean every raw region currently in the cell, not however many
+  // takes they happen to already be bucketed into - this will also split
+  // apart a genuine same-cell stereo pair if one exists, since nothing in
+  // the data distinguishes that case from this one (see the deferred
+  // region-grouping note for the real fix). Re-running this always resets
+  // to a clean, equally-sliced range in current order, so it's safe to
+  // click again after adding another region.
   //
   // Does its own sequential backend writes instead of looping calls to
   // setCellOpcodes, so only the FINAL response drives a UI update/grid
@@ -240,6 +251,8 @@ export default function App(): React.JSX.Element {
     const port = await window.api.getServerPort()
     let parsed: ParsedSfzResponse | null = null
     for (let i = 0; i < total; i++) {
+      const lorand = i === 0 ? '0' : (i / total).toFixed(6)
+      const hirand = i === total - 1 ? '1' : ((i + 1) / total).toFixed(6)
       const res = await fetch(`http://127.0.0.1:${port}/sfz/set-cell-opcodes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,8 +260,10 @@ export default function App(): React.JSX.Element {
           workingSfzPath: workingPath,
           regionIndices: [regions[i].regionIndex],
           opcodes: [
-            { name: 'seq_length', value: String(total) },
-            { name: 'seq_position', value: String(i + 1) }
+            { name: 'lorand', value: lorand },
+            { name: 'hirand', value: hirand },
+            { name: 'seq_length', value: '1' },
+            { name: 'seq_position', value: '1' }
           ]
         })
       })
