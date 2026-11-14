@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CellRecord, OpcodeEntry, RegionInfo, TakeInfo } from '../model/instrument'
 import './SampleTakeList.css'
 
@@ -40,6 +40,20 @@ function flattenRegions(cell: CellRecord): FlatRegion[] {
     })
   })
   return out
+}
+
+// Every opcode write (including a loop-point drag) round-trips through the
+// backend and comes back as a freshly re-parsed `instrument`, so `cell`
+// gets a brand-new object identity on every edit even when the edit itself
+// only touched one opcode on one region - the actual decoded audio is
+// untouched. Keying the reload effect below off this fingerprint instead
+// of `cell` directly means the heavy reset (close the AudioContext, drop
+// every decoded buffer, re-fetch and re-decode every sample from disk) only
+// runs when the real region/file set changes, not on every opcode edit -
+// that full reset is what was showing up as a flash/redraw on each edit.
+function regionFingerprint(cell: CellRecord | null, sfzFilePath: string | null): string {
+  if (!cell || !sfzFilePath) return ''
+  return sfzFilePath + '|' + flattenRegions(cell).map((r) => `${r.key}:${r.region.samplePath}`).join(',')
 }
 
 type RegionState =
@@ -248,6 +262,11 @@ export default function SampleTakeList({
     if (rafRef.current === null) rafRef.current = requestAnimationFrame(tick)
   }
 
+  // Deliberately NOT `[cell, sfzFilePath]` - see regionFingerprint above.
+  // The effect body below still reads the latest `cell`/`sfzFilePath` from
+  // this render's closure; the fingerprint only controls whether it reruns.
+  const fingerprint = useMemo(() => regionFingerprint(cell, sfzFilePath), [cell, sfzFilePath])
+
   useEffect(() => {
     buffersRef.current = new Map()
     setRegionStates({})
@@ -297,7 +316,8 @@ export default function SampleTakeList({
       ctx.close()
       audioCtxRef.current = null
     }
-  }, [cell, sfzFilePath])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fingerprint])
 
   function playRegion(key: string, region: RegionInfo): void {
     const ctx = audioCtxRef.current
