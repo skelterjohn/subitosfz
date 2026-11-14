@@ -461,10 +461,13 @@ export default function SampleTakeList({
             onPlayTake={playTake}
             onSetOpcode={onSetOpcode}
             onDeleteRegion={onDeleteRegion}
-            // Per-region, not per-take - see App.tsx's splitCellIntoRoundRobin
-            // for why a cell with only one take (by the backend's current
-            // same-criteria grouping) can still have multiple regions to split.
-            canSplit={cell.samples.reduce((sum, t) => sum + t.regions.length, 0) > 1}
+            // True only while some take still bundles more than one region
+            // together (no seq_position yet distinguishing them - see
+            // App.tsx's splitCellIntoRoundRobin). Once every take has
+            // exactly one region, the cell's already fully split - there's
+            // nothing left to break apart, even though the cell as a whole
+            // may still have several takes/regions in it.
+            canSplit={cell.samples.some((t) => t.regions.length > 1)}
             splitting={splitting}
             onSplit={handleSplit}
           />
@@ -627,21 +630,21 @@ function TakeItem({
             onto every row purely so it's reachable from wherever the user
             already is, not because this one take is special. See
             App.tsx's splitCellIntoRoundRobin for why this is per-region
-            rather than per-take. */}
-        <button
-          type="button"
-          className="sample-take-list__split"
-          onClick={onSplit}
-          disabled={!canSplit || splitting}
-          title={
-            canSplit
-              ? 'Split every region in this cell into round-robin (seq_length/seq_position)'
-              : 'Need at least 2 regions in this cell to split'
-          }
-          aria-label="Split into round-robin"
-        >
-          split
-        </button>
+            rather than per-take. Hidden rather than just disabled for a
+            single-region cell - there's nothing to round-robin, so the
+            control itself isn't relevant, not merely unavailable right now. */}
+        {canSplit && (
+          <button
+            type="button"
+            className="sample-take-list__split"
+            onClick={onSplit}
+            disabled={splitting}
+            title="Split every region in this cell into round-robin (seq_length/seq_position)"
+            aria-label="Split into round-robin"
+          >
+            split
+          </button>
+        )}
       </div>
     </div>
   )
