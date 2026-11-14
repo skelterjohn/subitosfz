@@ -411,8 +411,10 @@
   fill: #4a7fd9;
 }
 
-/* Where loop_start/loop_end currently sit - view-only reference for now,
-   not draggable yet. Same amber used for the grid's selected-cell outline. */
+/* Where loop_start/loop_end currently sit - dragging/clicking left of this
+   box moves loop_start, right of it moves loop_end (handled in Waveform's
+   pointer handlers; cursor feedback is set directly via style, not CSS).
+   Same amber used for the grid's selected-cell outline. */
 .sample-take-list__svg rect.sample-take-list__loop-region {
   fill: rgba(255, 179, 0, 0.25);
 }

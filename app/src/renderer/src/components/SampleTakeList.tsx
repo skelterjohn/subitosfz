@@ -447,6 +447,18 @@ function TakeItem({
   onDeleteRegion
 }: TakeItemProps): React.JSX.Element {
   const [holdSeconds, setHoldSeconds] = useState(DEFAULT_HOLD_SECONDS)
+  // Which regions' opcode panels are unfolded - lifted up from each row
+  // (rather than local state there) so a loop-block drag can tell whether
+  // every region in this take is folded closed or not; see commitLoopEdit.
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set())
+  function toggleOpen(key: string): void {
+    setOpenKeys((cur) => {
+      const next = new Set(cur)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
   const anyReady = take.regions.some((region) => {
     return regionStates[String(region.regionIndex)]?.status === 'ready'
   })
@@ -463,6 +475,41 @@ function TakeItem({
     })
   )
 
+  // A loop-block drag on one region's waveform commits here. A take's
+  // regions all play together on one note-on, so while every one of them
+  // is folded closed they're treated as a single unit - the edit fans out
+  // to all of them. The moment any region is opened for individual
+  // inspection, a drag targets just the region actually being dragged
+  // (opening a row is the signal that this one is being worked on alone).
+  // Each sibling's own opcode value is computed independently off its own
+  // nativeSampleRate/current loop range, not copied verbatim - a stereo
+  // pair's L/R files could in principle differ. A sibling with no loop
+  // range of its own is left alone - there's no edge on it to move.
+  function commitLoopEdit(sourceKey: string, edge: LoopEdge, edgeSec: number): Promise<void> {
+    const allClosed = take.regions.every((r) => !openKeys.has(String(r.regionIndex)))
+    const targets = allClosed
+      ? take.regions
+      : take.regions.filter((r) => String(r.regionIndex) === sourceKey)
+    return Promise.all(
+      targets.map((r) => {
+        const s = regionStates[String(r.regionIndex)]
+        if (s?.status !== 'ready') return Promise.resolve()
+        const loopRange = regionLoopRangeSec(r, s.nativeSampleRate)
+        if (!loopRange) return Promise.resolve()
+        const fileFrames = Math.max(0, Math.round(s.durationSec * s.nativeSampleRate) - 1)
+        const frames = Math.round(edgeSec * s.nativeSampleRate)
+        if (edge === 'start') {
+          const endFrames = Math.round(loopRange.end * s.nativeSampleRate)
+          const clamped = Math.max(0, Math.min(frames, endFrames - 1, fileFrames))
+          return onSetOpcode(r.regionIndex, 'loop_start', String(clamped))
+        }
+        const startFrames = Math.round(loopRange.start * s.nativeSampleRate)
+        const clamped = Math.max(startFrames + 1, Math.min(frames, fileFrames))
+        return onSetOpcode(r.regionIndex, 'loop_end', String(clamped))
+      })
+    ).then(() => undefined)
+  }
+
   return (
     <div className="sample-take-list__item">
       <div className="sample-take-list__regions">
@@ -477,8 +524,11 @@ function TakeItem({
               state={regionStates[key]}
               takeMaxDurationSec={takeMaxDurationSec}
               playheadPositionSec={playheads[key]}
+              isOpen={openKeys.has(key)}
+              onToggleOpen={() => toggleOpen(key)}
               onPlay={() => onPlayRegion(key, region)}
               onSetOpcode={onSetOpcode}
+              onCommitLoopEdit={(edge, edgeSec) => commitLoopEdit(key, edge, edgeSec)}
               onDeleteRegion={onDeleteRegion}
             />
           )
@@ -526,8 +576,11 @@ interface RegionRowProps {
   state: RegionState | undefined
   takeMaxDurationSec: number
   playheadPositionSec: number | undefined
+  isOpen: boolean
+  onToggleOpen: () => void
   onPlay: () => void
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  onCommitLoopEdit: (edge: LoopEdge, edgeSec: number) => Promise<void>
   onDeleteRegion: (regionIndex: number) => Promise<void>
 }
 
@@ -536,11 +589,13 @@ function RegionRow({
   state,
   takeMaxDurationSec,
   playheadPositionSec,
+  isOpen,
+  onToggleOpen,
   onPlay,
   onSetOpcode,
+  onCommitLoopEdit,
   onDeleteRegion
 }: RegionRowProps): React.JSX.Element {
-  const [opcodesOpen, setOpcodesOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // Bound to this region, so OpcodeRow/the add-opcode control below only
   // ever need to know a bare (name, value) pair.
@@ -586,10 +641,10 @@ function RegionRow({
         <button
           type="button"
           className="sample-take-list__toggle"
-          onClick={() => setOpcodesOpen((v) => !v)}
-          aria-label={opcodesOpen ? 'Hide opcodes' : 'Show opcodes'}
+          onClick={onToggleOpen}
+          aria-label={isOpen ? 'Hide opcodes' : 'Show opcodes'}
         >
-          {opcodesOpen ? '▾' : '▸'}
+          {isOpen ? '▾' : '▸'}
         </button>
         <div className="sample-take-list__name" title={samplePath}>
           <span className="sample-take-list__filename">{fileName}</span>
@@ -611,11 +666,12 @@ function RegionRow({
               takeMaxDurationSec={Math.max(takeMaxDurationSec, state.durationSec)}
               loopRangeSec={regionLoopRangeSec(region, state.nativeSampleRate)}
               playheadPositionSec={playheadPositionSec}
+              onCommitLoopEdit={onCommitLoopEdit}
             />
           )}
         </div>
       </div>
-      {opcodesOpen && (
+      {isOpen && (
         <div className="sample-take-list__opcodes">
           {/* This region's own play/delete controls - only reachable once
               unfolded, since the folded row relies on the take's single
@@ -915,14 +971,25 @@ interface WaveformProps {
   takeMaxDurationSec: number
   loopRangeSec: { start: number; end: number } | null
   playheadPositionSec: number | undefined
+  // Fires once, on release, with which edge moved and its seconds position
+  // in this take's shared timeline - the caller (TakeItem) decides whether
+  // that fans out to every region in the take or just this one, and does
+  // the seconds->frames conversion itself (each region can have its own
+  // nativeSampleRate), so this component only ever deals in geometry.
+  onCommitLoopEdit: (edge: LoopEdge, edgeSec: number) => Promise<void>
 }
+
+// Which edge of the loop block a drag/click is acting on - null means
+// inside the block (or there's no block to act on), where it's a no-op.
+type LoopEdge = 'start' | 'end'
 
 function Waveform({
   peaks,
   durationSec,
   takeMaxDurationSec,
   loopRangeSec,
-  playheadPositionSec
+  playheadPositionSec,
+  onCommitLoopEdit
 }: WaveformProps): React.JSX.Element {
   // Seconds -> viewBox x units, shared across every region in the take so
   // a shorter region's bars/loop-box/playhead all land at the same x a
@@ -930,21 +997,92 @@ function Waveform({
   // independently stretched to fill the full box width.
   const scale = takeMaxDurationSec > 0 ? PEAK_BARS / takeMaxDurationSec : 0
   const barDurationSec = peaks.length > 0 ? durationSec / peaks.length : 0
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  // Which edge is actively being dragged, and its live (uncommitted)
+  // seconds position - tracked locally so the box follows the cursor every
+  // frame without round-tripping onSetOpcode on every pointermove. The
+  // actual opcode write happens once, on release.
+  const [dragEdge, setDragEdge] = useState<LoopEdge | null>(null)
+  const [dragSec, setDragSec] = useState(0)
+
+  function clientXToSec(clientX: number): number {
+    const svg = svgRef.current
+    if (!svg || scale === 0) return 0
+    const rect = svg.getBoundingClientRect()
+    const frac = rect.width > 0 ? Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) : 0
+    return (frac * PEAK_BARS) / scale
+  }
+
+  // Hover-only cursor feedback (no re-render) - col-resize outside the
+  // current block, where a click/drag would do something, default inside
+  // it or when there's no block at all.
+  function updateHoverCursor(clientX: number): void {
+    const svg = svgRef.current
+    if (!svg) return
+    if (!loopRangeSec) {
+      svg.style.cursor = 'default'
+      return
+    }
+    const sec = clientXToSec(clientX)
+    svg.style.cursor = sec < loopRangeSec.start || sec > loopRangeSec.end ? 'col-resize' : 'default'
+  }
+
+  function handlePointerDown(e: React.PointerEvent<SVGSVGElement>): void {
+    if (!loopRangeSec) return
+    const sec = clientXToSec(e.clientX)
+    const edge: LoopEdge | null =
+      sec < loopRangeSec.start ? 'start' : sec > loopRangeSec.end ? 'end' : null
+    if (!edge) return
+    setDragEdge(edge)
+    setDragSec(sec)
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  function handlePointerMove(e: React.PointerEvent<SVGSVGElement>): void {
+    if (dragEdge) {
+      setDragSec(clientXToSec(e.clientX))
+    } else {
+      updateHoverCursor(e.clientX)
+    }
+  }
+
+  async function handlePointerUp(e: React.PointerEvent<SVGSVGElement>): Promise<void> {
+    const edge = dragEdge
+    const edgeSec = dragSec
+    setDragEdge(null)
+    if (!edge || !loopRangeSec) return
+    e.currentTarget.releasePointerCapture(e.pointerId)
+    await onCommitLoopEdit(edge, edgeSec)
+  }
+
+  // What's actually drawn for the loop box - the live drag position while
+  // dragging, the last-committed opcode values otherwise.
+  const displayLoopRange =
+    dragEdge && loopRangeSec
+      ? dragEdge === 'start'
+        ? { start: Math.min(dragSec, loopRangeSec.end), end: loopRangeSec.end }
+        : { start: loopRangeSec.start, end: Math.max(dragSec, loopRangeSec.start) }
+      : loopRangeSec
 
   return (
     <svg
+      ref={svgRef}
       viewBox={`0 0 ${PEAK_BARS} 100`}
       preserveAspectRatio="none"
       className="sample-take-list__svg"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
     >
-      {/* Drawn first (behind the bars) - just a reference for where
-          loop_start/loop_end currently sit, not yet editable. */}
-      {loopRangeSec && (
+      {/* Drawn first (behind the bars) - loop_start/loop_end's current
+          range. Clicking/dragging left of it moves loop_start, right of it
+          moves loop_end; clicking inside the block does nothing. */}
+      {displayLoopRange && (
         <rect
           className="sample-take-list__loop-region"
-          x={loopRangeSec.start * scale}
+          x={displayLoopRange.start * scale}
           y={0}
-          width={(loopRangeSec.end - loopRangeSec.start) * scale}
+          width={(displayLoopRange.end - displayLoopRange.start) * scale}
           height={100}
         />
       )}
