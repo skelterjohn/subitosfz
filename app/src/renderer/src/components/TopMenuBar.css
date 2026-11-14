@@ -31,6 +31,16 @@
   -webkit-app-region: drag;
 }
 
+/* Groups the icon + every menu button - never shrinks (the title wrap
+   below absorbs all the squeeze as the window narrows instead), so this
+   group's own width is always exactly what File/Help need, and the title
+   can never slide left underneath them. */
+.top-menu-bar__left {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+}
+
 /* Decorative only - pointer-events: none lets a click/drag here fall
    through to the bar's own drag region behind it, same as clicking any
    other blank part of the bar, rather than needing its own no-drag. */
@@ -74,11 +84,39 @@
   background: #d9e8fb;
 }
 
+/* Everything left over after .top-menu-bar__left - shrinks as the window
+   narrows (min-width: 0 overrides a flex item's default of not shrinking
+   below its content's natural width) rather than pushing File/Help around
+   or sliding under them. justify-content: center centers the title
+   *within whatever room is actually left*, not the whole bar - when the
+   window is wide that's visually the same thing, but it's what keeps the
+   title from ever drifting left of this wrap's own left edge. */
+.top-menu-bar__title-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* min-width: 0 (overriding the same default as above) is what actually
+   lets this shrink below its own text's natural width once the wrap runs
+   out of room - without it the text would just overflow the wrap
+   unclipped instead of ellipsizing. text-overflow only ever clips the
+   trailing (right, for this ltr text) edge, never the leading one, so
+   this reliably cuts off the right side rather than the left even while
+   centered. pointer-events: none lets a click/drag here fall through to
+   the bar's drag region, same as the icon. */
 .top-menu-bar__title {
-  margin-left: auto;
-  padding-right: 0.7rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: #777;
   font-size: 0.75rem;
+  pointer-events: none;
 }
 
 .top-menu-bar__dropdown {

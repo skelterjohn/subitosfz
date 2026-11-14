@@ -316,6 +316,22 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  // Just the filename, not the full path - used both for TopMenuBar's own
+  // centered display and the OS window title below. null (not '') when
+  // nothing is open, so callers can tell "no file" apart from an empty name.
+  const openFileName = sfzFilePath ? sfzFilePath.split(/[/\\]/).pop() ?? sfzFilePath : null
+
+  // document.title drives the real OS window title - Electron mirrors it
+  // automatically (no explicit win.setTitle needed) - which is what shows
+  // up in the taskbar's hover tooltip, Alt+Tab, etc., so this is the one
+  // place that needs the "$FILE - subito sfz" form specifically asked for
+  // there. TopMenuBar's own on-bar text is just the bare filename instead
+  // (see its openFileName prop) - the app identity is already given by the
+  // icon right next to it.
+  useEffect(() => {
+    document.title = openFileName ? `${openFileName} - subito sfz` : 'subito sfz'
+  }, [openFileName])
+
   // File menu (main/index.ts) just forwards clicks here - Open/Import/Save
   // reuse the exact same functions as their toolbar buttons. Save As still
   // doesn't do anything real: writing a working copy's content out under a
@@ -447,6 +463,7 @@ export default function App(): React.JSX.Element {
           outer wrapper instead - otherwise TopMenuBar would fall back to
           the browser default font instead of matching the rest of the app. */}
       <TopMenuBar
+        openFileName={openFileName}
         fileActions={{
           onNewWindow: () => window.api.newWindow(),
           onNew: requestNewInstrument,

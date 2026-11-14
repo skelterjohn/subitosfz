@@ -43,11 +43,18 @@ export interface HelpMenuActions {
 }
 
 interface Props {
+  // Just the open file's name (no path, no extension stripped) - null when
+  // nothing is open, in which case the bar falls back to plain branding.
+  openFileName: string | null
   fileActions: FileMenuActions
   helpActions: HelpMenuActions
 }
 
-export default function TopMenuBar({ fileActions, helpActions }: Props): React.JSX.Element | null {
+export default function TopMenuBar({
+  openFileName,
+  fileActions,
+  helpActions
+}: Props): React.JSX.Element | null {
   // Menu id (not just 'file') since there's now more than one top-level
   // menu - generalized here rather than one boolean per menu, since the
   // original File-only comment already anticipated more menus arriving.
@@ -124,53 +131,70 @@ export default function TopMenuBar({ fileActions, helpActions }: Props): React.J
 
   return (
     <div className="top-menu-bar" ref={containerRef}>
-      <img className="top-menu-bar__icon" src={appIconUrl} alt="" />
-      {menus.map((menu) => (
-        <div key={menu.id} className="top-menu-bar__menu">
-          <button
-            type="button"
-            className={`top-menu-bar__label ${openMenu === menu.id ? 'is-open' : ''}`}
-            onClick={() => setOpenMenu((v) => (v === menu.id ? null : menu.id))}
-            // Native menu bars switch which menu is open just by hovering,
-            // but only once one is already open - moving the mouse across
-            // the bar with nothing open shouldn't pop a menu open on its
-            // own, so this only fires the switch when openMenu is already
-            // set to something else.
-            onMouseEnter={() => {
-              if (openMenu !== null && openMenu !== menu.id) setOpenMenu(menu.id)
-            }}
-          >
-            {menu.label}
-          </button>
-          {openMenu === menu.id && (
-            <div className="top-menu-bar__dropdown">
-              {menu.entries.map((entry, i) =>
-                entry.type === 'separator' ? (
-                  <div key={i} className="top-menu-bar__separator" />
-                ) : (
-                  <button
-                    key={entry.label}
-                    type="button"
-                    className="top-menu-bar__item"
-                    onClick={entry.onClick}
-                  >
-                    <span>{entry.label}</span>
-                    {entry.accelerator && (
-                      <span className="top-menu-bar__accelerator">{entry.accelerator}</span>
-                    )}
-                  </button>
-                )
-              )}
-            </div>
-          )}
-        </div>
-      ))}
+      {/* Never shrinks (flex-shrink: 0 - see CSS) - the title to its right
+          gets all the squeeze instead, so File/Help are never the ones
+          that give up space as the window narrows. */}
+      <div className="top-menu-bar__left">
+        <img className="top-menu-bar__icon" src={appIconUrl} alt="" />
+        {menus.map((menu) => (
+          <div key={menu.id} className="top-menu-bar__menu">
+            <button
+              type="button"
+              className={`top-menu-bar__label ${openMenu === menu.id ? 'is-open' : ''}`}
+              onClick={() => setOpenMenu((v) => (v === menu.id ? null : menu.id))}
+              // Native menu bars switch which menu is open just by hovering,
+              // but only once one is already open - moving the mouse across
+              // the bar with nothing open shouldn't pop a menu open on its
+              // own, so this only fires the switch when openMenu is already
+              // set to something else.
+              onMouseEnter={() => {
+                if (openMenu !== null && openMenu !== menu.id) setOpenMenu(menu.id)
+              }}
+            >
+              {menu.label}
+            </button>
+            {openMenu === menu.id && (
+              <div className="top-menu-bar__dropdown">
+                {menu.entries.map((entry, i) =>
+                  entry.type === 'separator' ? (
+                    <div key={i} className="top-menu-bar__separator" />
+                  ) : (
+                    <button
+                      key={entry.label}
+                      type="button"
+                      className="top-menu-bar__item"
+                      onClick={entry.onClick}
+                    >
+                      <span>{entry.label}</span>
+                      {entry.accelerator && (
+                        <span className="top-menu-bar__accelerator">{entry.accelerator}</span>
+                      )}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
       {/* On Windows there's no native title bar left at all (titleBarStyle
           'hidden' in main/index.ts) - this is the only place a window
-          title shows up now. Static text, not the open file's path (that
-          already has its own row further down) - just enough to still
-          read as "a title bar" at a glance. */}
-      <span className="top-menu-bar__title">subito sfz</span>
+          title shows up now. Takes up whatever's left after the left
+          group above (flex: 1 1 auto, min-width: 0 - see CSS) rather than
+          being centered against the whole bar regardless of that group's
+          width - centered WITHIN that remaining space instead, so it can
+          never slide left into/under File or Help; it just has less room
+          to be centered in as the window narrows. Once there's not even
+          enough room for the full name, its own overflow/ellipsis (not
+          this wrapper's) clips the right side, never the left. App
+          identity is already the icon to the left, so this is just the
+          bare filename, not "File - subito sfz" (that fuller form is for
+          the OS-level window title/taskbar tooltip - see App.tsx's
+          document.title effect). Falls back to plain branding when
+          nothing is open. */}
+      <div className="top-menu-bar__title-wrap">
+        <span className="top-menu-bar__title">{openFileName ?? 'subito sfz'}</span>
+      </div>
     </div>
   )
 }
