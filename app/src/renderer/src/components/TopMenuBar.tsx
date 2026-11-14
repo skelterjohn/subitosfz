@@ -131,6 +131,14 @@ export default function TopMenuBar({ fileActions, helpActions }: Props): React.J
             type="button"
             className={`top-menu-bar__label ${openMenu === menu.id ? 'is-open' : ''}`}
             onClick={() => setOpenMenu((v) => (v === menu.id ? null : menu.id))}
+            // Native menu bars switch which menu is open just by hovering,
+            // but only once one is already open - moving the mouse across
+            // the bar with nothing open shouldn't pop a menu open on its
+            // own, so this only fires the switch when openMenu is already
+            // set to something else.
+            onMouseEnter={() => {
+              if (openMenu !== null && openMenu !== menu.id) setOpenMenu(menu.id)
+            }}
           >
             {menu.label}
           </button>

@@ -50,6 +50,12 @@
 .top-menu-bar__menu {
   position: relative;
   display: flex;
+  /* Without this, .top-menu-bar's align-items: center shrinks this wrapper
+     (and the hover/open highlight inside it) to the button's own natural
+     height and centers it, leaving visible gaps above/below - stretch it
+     to the bar's full height instead so the highlight reaches top and
+     bottom edges. */
+  align-self: stretch;
 }
 
 .top-menu-bar__label {
