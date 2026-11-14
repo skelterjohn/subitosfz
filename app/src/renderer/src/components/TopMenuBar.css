@@ -16,6 +16,14 @@
   display: flex;
   align-items: center;
   height: 32px;
+  /* Stop short of the reserved native minimize/maximize/close button area
+     on Windows (titleBarOverlay) - env() reports that safe width once the
+     overlay is active, so margin-left: auto on the title below lands it
+     just left of the buttons instead of rendering underneath them
+     (they're painted on top of anything we draw there). No overlay exists
+     on Linux (native frame kept) or macOS (this never renders there), so
+     the fallback is just the full width. */
+  width: env(titlebar-area-width, 100%);
   background: #f3f3f3;
   border-bottom: 1px solid #ddd;
   font-size: 0.8rem;
@@ -51,7 +59,8 @@
 }
 
 .top-menu-bar__title {
-  margin-left: 0.5rem;
+  margin-left: auto;
+  padding-right: 0.7rem;
   color: #777;
   font-size: 0.75rem;
 }
