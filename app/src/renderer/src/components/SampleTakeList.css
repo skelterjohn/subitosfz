@@ -115,7 +115,6 @@
   cursor: pointer;
   border: none;
   border-left: 1px solid #ddd;
-  border-radius: 0 0 4px 0;
   background: #4a7fd9;
   color: white;
   font-size: 1.3rem;
@@ -127,6 +126,34 @@
 }
 
 .sample-take-list__play-take:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Below the play button, not beside it - same fixed 48px column. Converts
+   every take in the cell (not just this one) into round-robin, so it's
+   deliberately styled distinctly from the play button's own blue rather
+   than looking like a sibling action on equal footing. */
+.sample-take-list__split {
+  flex-shrink: 0;
+  height: 20px;
+  cursor: pointer;
+  border: none;
+  border-left: 1px solid #ddd;
+  border-top: 1px solid #ddd;
+  border-radius: 0 0 4px 0;
+  background: #6c6c6c;
+  color: white;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.sample-take-list__split:hover:not(:disabled) {
+  background: #555;
+}
+
+.sample-take-list__split:disabled {
   opacity: 0.5;
   cursor: default;
 }

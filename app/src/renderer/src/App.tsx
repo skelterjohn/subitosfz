@@ -211,6 +211,61 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  // Converts every region sharing a cell - which, with no seq_position
+  // set, all fire together on one note-on - into round-robin: each region
+  // gets seq_length = (region count) and a distinct seq_position, in the
+  // same top-to-bottom/left-to-right order the take list already shows
+  // them in. Deliberately per-REGION, not per-take: until seq_position
+  // (or lorand/hirand/trigger) exists, sfz_parse.rs's sound_identity has
+  // no way to tell a stereo pair's two mic channels apart from two
+  // distinct round-robin recordings - same-criteria regions with no such
+  // opcode just collapse into one take, however many of them there are.
+  // That's exactly the state this button exists to break apart, so "the
+  // group" has to mean every raw region currently in the cell, not
+  // however many takes they happen to already be bucketed into - this
+  // will also split apart a genuine same-cell stereo pair if one exists,
+  // since nothing in the data distinguishes that case from this one
+  // (see the deferred region-grouping note for the real fix).
+  // Re-running this always resets to a clean 1..N sequence in current
+  // order, so it's safe to click again after adding another region.
+  //
+  // Does its own sequential backend writes instead of looping calls to
+  // setCellOpcodes, so only the FINAL response drives a UI update/grid
+  // remount - one remount per region would be visually noisy for no benefit.
+  async function splitCellIntoRoundRobin(cell: CellRecord): Promise<void> {
+    if (!workingPath) throw new Error('no instrument is open')
+    const regions = cell.samples.flatMap((take) => take.regions)
+    const total = regions.length
+    if (total < 2) return
+    const port = await window.api.getServerPort()
+    let parsed: ParsedSfzResponse | null = null
+    for (let i = 0; i < total; i++) {
+      const res = await fetch(`http://127.0.0.1:${port}/sfz/set-cell-opcodes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workingSfzPath: workingPath,
+          regionIndices: [regions[i].regionIndex],
+          opcodes: [
+            { name: 'seq_length', value: String(total) },
+            { name: 'seq_position', value: String(i + 1) }
+          ]
+        })
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `request failed (${res.status})`)
+      }
+      parsed = (await res.json()) as ParsedSfzResponse
+    }
+    if (!parsed) return
+    const next = instrumentFromParsedSfz(parsed)
+    setInstrument(next)
+    setSelectedCell(findMatchingCell(next, cell))
+    setDirty(true)
+    setLoadGeneration((g) => g + 1)
+  }
+
   // Removes one region's own <region> block entirely (not just an opcode
   // edit) - unlike every other mutation here, this is a delete, not an
   // append (see sfz_write.rs's delete_region). The sample file on disk is
@@ -579,6 +634,9 @@ export default function App(): React.JSX.Element {
               sfzFilePath={sfzFilePath}
               onSetOpcode={setRegionOpcode}
               onDeleteRegion={deleteRegion}
+              onSplitRoundRobin={() =>
+                selectedCell ? splitCellIntoRoundRobin(selectedCell) : Promise.resolve()
+              }
             />
           </div>
           {/* Absolutely positioned against this column (position: relative

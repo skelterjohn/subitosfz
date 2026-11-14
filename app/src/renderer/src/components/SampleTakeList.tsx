@@ -7,6 +7,11 @@ interface Props {
   sfzFilePath: string | null
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
   onDeleteRegion: (regionIndex: number) => Promise<void>
+  // Converts every take in the current cell (whatever that is, from the
+  // caller's own perspective - this component doesn't pass anything back,
+  // the cell it's already been given is the group) into round-robin -
+  // seq_length/seq_position, not something this component computes itself.
+  onSplitRoundRobin: () => Promise<void>
 }
 
 function TrashIcon(): React.JSX.Element {
@@ -211,9 +216,27 @@ export default function SampleTakeList({
   cell,
   sfzFilePath,
   onSetOpcode,
-  onDeleteRegion
+  onDeleteRegion,
+  onSplitRoundRobin
 }: Props): React.JSX.Element {
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({})
+  // Shared across every take row in this cell (not per-row) - they're all
+  // really the same action (split THIS cell), just duplicated onto every
+  // row's own button for convenience, so one in-flight request should
+  // disable all of them rather than just the one that was clicked.
+  const [splitting, setSplitting] = useState(false)
+
+  async function handleSplit(): Promise<void> {
+    if (splitting) return
+    setSplitting(true)
+    try {
+      await onSplitRoundRobin()
+    } catch (err) {
+      window.alert(`Failed to split into round-robin: ${String(err)}`)
+    } finally {
+      setSplitting(false)
+    }
+  }
   // Seconds into each actively-sounding region's own buffer, not a 0..1
   // fraction - see playbackPositionSec for why.
   const [playheads, setPlayheads] = useState<Record<string, number>>({})
@@ -438,6 +461,12 @@ export default function SampleTakeList({
             onPlayTake={playTake}
             onSetOpcode={onSetOpcode}
             onDeleteRegion={onDeleteRegion}
+            // Per-region, not per-take - see App.tsx's splitCellIntoRoundRobin
+            // for why a cell with only one take (by the backend's current
+            // same-criteria grouping) can still have multiple regions to split.
+            canSplit={cell.samples.reduce((sum, t) => sum + t.regions.length, 0) > 1}
+            splitting={splitting}
+            onSplit={handleSplit}
           />
         ))}
       </div>
@@ -454,6 +483,11 @@ interface TakeItemProps {
   onPlayTake: (takeIndex: number, take: TakeInfo, holdSeconds: number) => void
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
   onDeleteRegion: (regionIndex: number) => Promise<void>
+  // Same action/state duplicated onto every take row in the cell - see
+  // SampleTakeList's own handleSplit for why this isn't take-specific.
+  canSplit: boolean
+  splitting: boolean
+  onSplit: () => void
 }
 
 function TakeItem({
@@ -464,7 +498,10 @@ function TakeItem({
   onPlayRegion,
   onPlayTake,
   onSetOpcode,
-  onDeleteRegion
+  onDeleteRegion,
+  canSplit,
+  splitting,
+  onSplit
 }: TakeItemProps): React.JSX.Element {
   const [holdSeconds, setHoldSeconds] = useState(DEFAULT_HOLD_SECONDS)
   // Which regions' opcode panels are unfolded - lifted up from each row
@@ -585,6 +622,25 @@ function TakeItem({
           aria-label="Play take"
         >
           ▶
+        </button>
+        {/* Acts on every region in the cell, not just this row - duplicated
+            onto every row purely so it's reachable from wherever the user
+            already is, not because this one take is special. See
+            App.tsx's splitCellIntoRoundRobin for why this is per-region
+            rather than per-take. */}
+        <button
+          type="button"
+          className="sample-take-list__split"
+          onClick={onSplit}
+          disabled={!canSplit || splitting}
+          title={
+            canSplit
+              ? 'Split every region in this cell into round-robin (seq_length/seq_position)'
+              : 'Need at least 2 regions in this cell to split'
+          }
+          aria-label="Split into round-robin"
+        >
+          split
         </button>
       </div>
     </div>
