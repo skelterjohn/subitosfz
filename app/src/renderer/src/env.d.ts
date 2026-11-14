@@ -5,6 +5,11 @@ export {}
 declare global {
   interface Window {
     api: {
+      // Node's process.platform, exposed as a plain string (not
+      // NodeJS.Platform) - the renderer's own tsconfig deliberately has no
+      // Node ambient types, to avoid leaking Node globals into browser code.
+      platform: string
+      quitApp: () => Promise<void>
       getServerPort: () => Promise<number>
       getStartTime: () => Promise<number>
       getWorkingSfzPath: (originalPath: string) => Promise<string>

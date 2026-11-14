@@ -15,6 +15,13 @@ let serverProcess: ChildProcess | null = null
 let serverPort: number | null = null
 let mainWindow: BrowserWindow | null = null
 
+// Must match TopMenuBar.css's `.top-menu-bar` height exactly - this is the
+// window's native titleBarOverlay caption-button strip (Windows only), the
+// CSS value is our own drawn bar directly beneath/behind it. A mismatch
+// means the native minimize/maximize/close buttons float over two rows
+// instead of lining up with our single one.
+const TOP_BAR_HEIGHT = 32
+
 interface ImportDirs {
   lastSf2Dir?: string
   lastDestDir?: string
@@ -190,9 +197,29 @@ async function createWindow(): Promise<void> {
     width: windowState.width,
     height: windowState.height,
     icon: nativeImage.createFromPath(appIconPath()),
-    // Native frame (not frame: false) so the application menu set via
-    // Menu.setApplicationMenu actually has somewhere to render - a
-    // frameless window hides the menu bar entirely, accelerators aside.
+    // On Windows, TopMenuBar.tsx itself IS the title bar - no native frame
+    // at all above it. titleBarStyle 'hidden' removes both the OS title
+    // bar AND the classic File/Edit row; titleBarOverlay keeps Windows'
+    // own minimize/maximize/close buttons drawn natively (pixel-perfect,
+    // free hit-testing) layered on top of our content in that corner,
+    // while we draw everything else (icon/title, File menu) ourselves.
+    // TOP_BAR_HEIGHT must match TopMenuBar.css's own height so the native
+    // buttons line up with our bar instead of floating over two rows.
+    // macOS keeps its real native frame + system menu bar (unaffected by
+    // any of this - see Menu.setApplicationMenu below). Linux keeps its
+    // native frame too for now (titleBarOverlay isn't reliably supported
+    // across desktop environments there) - just the classic menu row gets
+    // hidden on Linux, same as before.
+    ...(process.platform === 'win32'
+      ? {
+          titleBarStyle: 'hidden' as const,
+          titleBarOverlay: {
+            color: '#f3f3f3',
+            symbolColor: '#333333',
+            height: TOP_BAR_HEIGHT
+          }
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -201,6 +228,14 @@ async function createWindow(): Promise<void> {
 
   windowState.manage(win)
   mainWindow = win
+
+  // Linux fallback: no titleBarOverlay, so the native frame stays, but the
+  // classic File/Edit row is still redundant with TopMenuBar.tsx - hide it.
+  // Windows already has no menu row at all once titleBarStyle is 'hidden'.
+  // macOS's application menu lives in the system menu bar, untouched here.
+  if (process.platform === 'linux') {
+    win.setMenuBarVisibility(false)
+  }
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -211,6 +246,11 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildMenu())
+
+  // Only reachable from TopMenuBar.tsx's own Quit item - the native menu's
+  // own Quit (role: 'quit') doesn't need this, Electron handles that role
+  // without any IPC round trip.
+  ipcMain.handle('quit-app', () => app.quit())
 
   ipcMain.handle('get-server-port', () => serverPort)
   ipcMain.handle('get-start-time', () => appStartTime)

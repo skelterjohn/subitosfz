@@ -1,0 +1,106 @@
+/* On Windows this IS the title bar - main/index.ts uses titleBarStyle
+   'hidden', so there's no native frame above it at all, just Windows' own
+   minimize/maximize/close buttons layered on top via titleBarOverlay in
+   the top-right corner (that's why the bar itself has no window controls
+   of its own - those are native, not drawn here). Height must match
+   main/index.ts's TOP_BAR_HEIGHT exactly so the native buttons line up
+   with this row instead of floating over two. The whole bar is a drag
+   region (moves the window, double-click maximizes, same as a real title
+   bar) except the interactive bits, which opt back out below. On Linux
+   the native frame is still present above this (titleBarOverlay isn't
+   reliably supported across desktop environments there) - this is just
+   the classic File/Edit row's replacement in that case. */
+.top-menu-bar {
+  flex-shrink: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  background: #f3f3f3;
+  border-bottom: 1px solid #ddd;
+  font-size: 0.8rem;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+/* Decorative only - pointer-events: none lets a click/drag here fall
+   through to the bar's own drag region behind it, same as clicking any
+   other blank part of the bar, rather than needing its own no-drag. */
+.top-menu-bar__icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-left: 0.5rem;
+  pointer-events: none;
+}
+
+.top-menu-bar__label {
+  -webkit-app-region: no-drag;
+  align-self: stretch;
+  cursor: default;
+  border: none;
+  background: transparent;
+  padding: 0 0.7rem;
+  color: #222;
+  font: inherit;
+}
+
+.top-menu-bar__label:hover,
+.top-menu-bar__label.is-open {
+  background: #d9e8fb;
+}
+
+.top-menu-bar__title {
+  margin-left: 0.5rem;
+  color: #777;
+  font-size: 0.75rem;
+}
+
+.top-menu-bar__dropdown {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  min-width: 220px;
+  background: #fff;
+  border: 1px solid #c8c8c8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  padding: 0.2rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.top-menu-bar__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: default;
+  border: none;
+  background: transparent;
+  padding: 0.3rem 0.9rem;
+  font: inherit;
+  text-align: left;
+  color: #222;
+}
+
+.top-menu-bar__item:hover {
+  background: #2a6fdb;
+  color: #fff;
+}
+
+.top-menu-bar__accelerator {
+  color: #999;
+  font-size: 0.75rem;
+}
+
+.top-menu-bar__item:hover .top-menu-bar__accelerator {
+  color: #dce8fb;
+}
+
+.top-menu-bar__separator {
+  height: 1px;
+  margin: 0.25rem 0.4rem;
+  background: #e2e2e2;
+}

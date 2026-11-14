@@ -10,6 +10,12 @@ function onMenuEvent(channel: string, callback: () => void): () => void {
 }
 
 const api = {
+  // Drives whether the renderer draws its own File-menu bar: macOS keeps
+  // the native application menu in the system menu bar (see main/index.ts),
+  // every other platform hides that native menu row and gets the
+  // self-drawn one instead - see TopMenuBar.tsx.
+  platform: process.platform,
+  quitApp: (): Promise<void> => ipcRenderer.invoke('quit-app'),
   getServerPort: (): Promise<number> => ipcRenderer.invoke('get-server-port'),
   getStartTime: (): Promise<number> => ipcRenderer.invoke('get-start-time'),
   getWorkingSfzPath: (originalPath: string): Promise<string> =>

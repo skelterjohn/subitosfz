@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import TopMenuBar from './components/TopMenuBar'
 import InstrumentGrid from './components/InstrumentGrid'
 import NewInstrumentModal from './components/NewInstrumentModal'
 import ImportSf2Modal from './components/ImportSf2Modal'
@@ -429,18 +430,36 @@ export default function App(): React.JSX.Element {
   }, [])
 
   return (
-    <div
-      style={{
-        fontFamily: 'sans-serif',
-        padding: '1.25rem',
-        height: '100%',
-        boxSizing: 'border-box',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '0.75rem'
-      }}
-    >
-      {sfzFilePath && (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif' }}>
+      {/* No-op (renders null) on macOS, which keeps its File menu in the
+          native system menu bar - see TopMenuBar.tsx. Lives outside the
+          padded content div below, so fontFamily is set on this shared
+          outer wrapper instead - otherwise TopMenuBar would fall back to
+          the browser default font instead of matching the rest of the app. */}
+      <TopMenuBar
+        actions={{
+          onNew: requestNewInstrument,
+          onImportSf2: () => setImportOpen(true),
+          onImportAudio: () => setImportRecordingOpen(true),
+          onOpen: openSfzFile,
+          onSave: saveSfzFile,
+          onSaveAs: () => console.log('[menu] save as requested - not implemented yet'),
+          onDiscardChanges: discardChanges,
+          onApplyToMuseScore: requestApplyToMuseScore
+        }}
+      />
+      <div
+        style={{
+          padding: '1.25rem',
+          flex: '1 1 0',
+          minHeight: 0,
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.75rem'
+        }}
+      >
+        {sfzFilePath && (
         <div className="open-row">
           <span className="title-bar__sfz-path">
             {sfzFilePath}
@@ -553,6 +572,7 @@ export default function App(): React.JSX.Element {
             Server status: <strong>{health.status}</strong> (v{health.version})
           </>
         )}
+      </div>
       </div>
     </div>
   )
