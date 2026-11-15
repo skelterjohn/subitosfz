@@ -113,6 +113,24 @@ fn element_text<'a>(node: roxmltree::Node<'a, 'a>) -> Option<&'a str> {
     node.children().find_map(|c| c.text())
 }
 
+// Byte range of just the VALUE inside an element's own id="..." attribute
+// (e.g. the `guitar-nylon` part of `<Instrument id="guitar-nylon">`) within
+// the original source text - roxmltree doesn't expose per-attribute byte
+// ranges, only whole-node ones, so this re-scans the node's own opening tag
+// text for it. Every <Instrument> in this codebase's own real files has
+// been observed to carry `id` as its only attribute, so a plain substring
+// search for `id="` is safe in practice without needing a real attribute
+// parser.
+fn id_attr_value_range(source: &str, node: roxmltree::Node) -> Option<std::ops::Range<usize>> {
+    let elem_start = node.range().start;
+    let tag_end = source[elem_start..].find('>')? + elem_start;
+    let tag = &source[elem_start..tag_end];
+    let value_start_in_tag = tag.find("id=\"")? + 4;
+    let value_start = elem_start + value_start_in_tag;
+    let value_len = tag[value_start_in_tag..].find('"')?;
+    Some(value_start..value_start + value_len)
+}
+
 // Best-effort Part-id -> human label map (e.g. "1" -> "Classical Guitar"),
 // read from the .mscx notation XML purely for display in the track picker.
 // Returns an empty map on any parse failure rather than erroring the whole
@@ -469,11 +487,18 @@ fn with_fresh_eid(xml: &str) -> String {
 
 fn duration_xml(node: roxmltree::Node, source: &str) -> String {
     let mut out = String::new();
-    if let Some(dt) = node.children().find(|n| n.has_tag_name("durationType")) {
-        out.push_str(&source[dt.range()]);
-    }
+    // dots BEFORE durationType - confirmed by hand that MuseScore's own
+    // real staves always write it in this order (every dotted note
+    // checked, 12/12), and that the opposite order (what this function
+    // used to emit) gets silently ignored at playback: the <dots> element
+    // is present in the file either way, but a dotted quarter plays as a
+    // plain quarter, a dotted half as a plain half, when it comes after
+    // durationType instead of before.
     if let Some(dots) = node.children().find(|n| n.has_tag_name("dots")) {
         out.push_str(&source[dots.range()]);
+    }
+    if let Some(dt) = node.children().find(|n| n.has_tag_name("durationType")) {
+        out.push_str(&source[dt.range()]);
     }
     out
 }
@@ -549,6 +574,11 @@ fn chord_notes_xml(chord: roxmltree::Node, mscx_text: &str) -> String {
 struct InjectResult {
     mscx_text: String,
     new_parts: Vec<(String, String)>,
+    // (part_id, new unique Instrument id) for every REAL selected part -
+    // see the uniquification step near the top of inject_keyswitches'
+    // main loop for why a real part's own Instrument id can need
+    // rewriting too, not just the synthetic keyswitch staff's.
+    real_instrument_ids: Vec<(String, String)>,
 }
 
 // Builds one dedicated, hidden keyswitch staff per selected part, rather
@@ -593,6 +623,7 @@ fn inject_keyswitches(
     // pure insertion is a zero-width range (offset..offset).
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     let mut new_parts: Vec<(String, String)> = Vec::new();
+    let mut real_instrument_ids: Vec<(String, String)> = Vec::new();
 
     let stale_part_ids = remove_previous_keyswitch_staves(&doc, &mut edits);
 
@@ -626,15 +657,55 @@ fn inject_keyswitches(
         if !part_ids.iter().any(|p| p == part_id_str) {
             continue;
         }
-        let Some(real_staff) = doc
-            .descendants()
-            .find(|n| n.has_tag_name("Staff") && n.attribute("id") == Some(part_id_str))
-        else {
+        // A Part's own inner <Staff> (StaffType/defaultClef metadata, no
+        // Measures) carries the SAME id as its Part in files that have
+        // been through at least one MuseScore save - id="1" shows up
+        // there too, not just on the real top-level content Staff further
+        // down the document that actually holds the Measures. Without
+        // excluding Part-nested matches, .find() (first in document
+        // order) picks that empty metadata Staff instead, and the
+        // mirroring loop below then has no Measures to walk - producing a
+        // silently empty synthetic staff (confirmed by hand: MuseScore's
+        // own "Incomplete measure... Found: 0/1" corruption check on load).
+        let Some(real_staff) = doc.descendants().find(|n| {
+            n.has_tag_name("Staff")
+                && n.attribute("id") == Some(part_id_str)
+                && n.ancestors().all(|a| !a.has_tag_name("Part"))
+        }) else {
             continue; // no notation content for this part - nothing to mirror
         };
         let Some(instrument) = part.descendants().find(|n| n.has_tag_name("Instrument")) else {
             continue;
         };
+
+        // Uniquify this REAL part's own Instrument id too, not just the
+        // synthetic keyswitch staff's below - confirmed by hand that
+        // MuseScore's Mixer binds a sound to a track by Instrument id, and
+        // several real Parts sharing one id (e.g. three guitar parts all
+        // literally id="guitar-nylon", which MuseScore itself is fine with
+        // for notation purposes) collide exactly the same way the
+        // synthetic staves did before they got their own unique suffix -
+        // only one of the colliding real tracks ends up actually routed,
+        // the others go silent. Suffixed with this part's own id (already
+        // globally unique) rather than anything generated, and skipped if
+        // already present so re-running apply on an already-uniquified id
+        // doesn't keep growing the suffix on every pass. Unlike the
+        // keyswitch-staff logic below, this has nothing to do with
+        // articulations, so it runs even when there's nothing to switch.
+        let bare_instrument_id = instrument.attribute("id").unwrap_or("instrument");
+        let unique_suffix = format!("-{part_id_str}");
+        let unique_real_instrument_id = if bare_instrument_id.ends_with(&unique_suffix) {
+            bare_instrument_id.to_string()
+        } else {
+            format!("{bare_instrument_id}{unique_suffix}")
+        };
+        if unique_real_instrument_id != bare_instrument_id {
+            if let Some(range) = id_attr_value_range(mscx_text, instrument) {
+                edits.push((range, unique_real_instrument_id.clone()));
+            }
+        }
+        real_instrument_ids.push((part_id_str.to_string(), unique_real_instrument_id));
+
         if articulation_notes.is_empty() {
             continue;
         }
@@ -654,8 +725,10 @@ fn inject_keyswitches(
         // the actual bug behind content appearing to cross-wire between
         // staves, independent of how Part/Staff document order was
         // arranged - MuseScore evidently treats Instrument id as more
-        // than a label).
-        let instrument_id = instrument.attribute("id").unwrap_or("instrument");
+        // than a label). Based on the ORIGINAL bare id, not
+        // unique_real_instrument_id above - this already gets its own
+        // unique suffix via new_part_id regardless, no need to compound it.
+        let instrument_id = bare_instrument_id;
         let mscx_instrument_id = format!("{KEYSWITCH_EID_PREFIX}{instrument_id}-{new_part_id}");
         new_parts.push((new_part_id.to_string(), mscx_instrument_id.clone()));
         let long_name = instrument
@@ -733,8 +806,15 @@ fn inject_keyswitches(
         let mut staff_body = String::new();
 
         for measure in real_staff.children().filter(|n| n.has_tag_name("Measure")) {
-            staff_body.push_str("<Measure><voice>");
-            if let Some(voice) = measure.children().find(|n| n.has_tag_name("voice")) {
+            staff_body.push_str("<Measure>");
+            // EVERY voice, not just the first (.find() silently dropped
+            // every voice beyond the first) - confirmed by hand that a
+            // second voice (chord tones/ties the first voice doesn't
+            // carry, often with its own dotted durations) was getting
+            // dropped from the mirror entirely, not merely "just its top
+            // note" as it first looked - the whole voice was missing.
+            for voice in measure.children().filter(|n| n.has_tag_name("voice")) {
+                staff_body.push_str("<voice>");
                 for child in voice.children().filter(|n| n.is_element()) {
                     // TimeSig/KeySig keep the hidden staff's own measure
                     // durations correct; Dynamic is copied too since this
@@ -839,8 +919,9 @@ fn inject_keyswitches(
                         chord_notes_xml(child, mscx_text)
                     ));
                 }
+                staff_body.push_str("</voice>");
             }
-            staff_body.push_str("</voice></Measure>");
+            staff_body.push_str("</Measure>");
         }
 
         let new_staff_xml = format!("<Staff id=\"{new_staff_id}\">{staff_body}</Staff>\n");
@@ -873,7 +954,7 @@ fn inject_keyswitches(
     for (range, replacement) in edits {
         new_text.replace_range(range, &replacement);
     }
-    Ok(InjectResult { mscx_text: new_text, new_parts })
+    Ok(InjectResult { mscx_text: new_text, new_parts, real_instrument_ids })
 }
 
 // Everything that makes this "is it actually a MuseScore 4 file" - its
@@ -916,6 +997,19 @@ pub fn inspect(path: &Path) -> Result<MuseScoreInfo, String> {
 
     let out = tracks
         .iter()
+        // Exclude tracks for Parts this app injected on a previous apply
+        // (signed via KEYSWITCH_EID_PREFIX - see remove_previous_keyswitch_staves)
+        // - they're hidden shadow-performance staves, not real selectable
+        // instrument tracks, and would otherwise show up in the picker
+        // alongside the genuine ones every time a file is re-inspected.
+        // apply() itself already finds and removes every one of these
+        // regardless of what's selected this round, so nothing is lost by
+        // hiding them here - they just shouldn't be choosable in the first place.
+        .filter(|t| {
+            !t.get("instrumentId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.starts_with(KEYSWITCH_EID_PREFIX))
+        })
         .map(|t| {
             let part_id = t
                 .get("partId")
@@ -972,6 +1066,27 @@ const SFIZZ_COMPONENT_STATE_TAIL: [u8; 77] = [
     0x00, 0x26, 0x93, 0x49, 0x3f, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x3f, 0x0b, 0x00, 0x00, 0x00,
     0x80, 0x3f,
 ];
+
+// Every track apply() touches gets its OWN on-disk copy of the derived
+// keyswitch sfz, even though the content is byte-identical - otherwise
+// every track's plugin componentState blob (which embeds this path and
+// nothing else variable) ends up byte-identical too, and that turns out
+// to silence all but one of the colliding tracks. Confirmed earlier in
+// this exact feature for the real+hidden pair of a single guitar (fixed
+// by muting the real side); this is the same collision showing up again
+// across several DIFFERENT guitars' now-unmuted hidden tracks, which
+// muting can't help since all of them are meant to be audible. `tag` is
+// the track's own stable mscx Part id (not a growing counter), so
+// re-applying overwrites the same sibling files instead of leaving an
+// ever-growing pile of them in the project directory.
+fn unique_keyswitch_copy(derived_path: &str, tag: &str) -> Result<String, String> {
+    let base = Path::new(derived_path);
+    let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("keyswitch");
+    let ext = base.extension().and_then(|s| s.to_str()).unwrap_or("sfz");
+    let copy_path = base.with_file_name(format!("{stem}-{tag}.{ext}"));
+    fs::copy(base, &copy_path).map_err(|e| format!("failed to copy keyswitch sfz for track {tag}: {e}"))?;
+    Ok(copy_path.to_string_lossy().to_string())
+}
 
 fn sfizz_component_state(sfz_path: &str) -> String {
     // Forward-slash, matching the convention seen in every observed blob
@@ -1052,21 +1167,25 @@ pub fn apply(
     let mut settings: Value = serde_json::from_slice(&entries[settings_index].1)
         .map_err(|e| format!("failed to parse audiosettings.json: {e}"))?;
 
-    let sfizz_in = serde_json::json!({
-        "resourceMeta": {
-            "attributes": {
-                "categories": "Instrument|Synth",
-                "playbackSetupData": "last.last.last"
+    // See unique_keyswitch_copy's own comment for why this is a function
+    // of a per-track path rather than one shared Value cloned everywhere.
+    let sfizz_in_for = |derived_path: &str| {
+        serde_json::json!({
+            "resourceMeta": {
+                "attributes": {
+                    "categories": "Instrument|Synth",
+                    "playbackSetupData": "last.last.last"
+                },
+                "hasNativeEditorSupport": true,
+                "id": "sfizz",
+                "type": "vst_plugin",
+                "vendor": "SFZTools"
             },
-            "hasNativeEditorSupport": true,
-            "id": "sfizz",
-            "type": "vst_plugin",
-            "vendor": "SFZTools"
-        },
-        "unitConfiguration": {
-            "componentState": sfizz_component_state(&keyswitch.derived_path)
-        }
-    });
+            "unitConfiguration": {
+                "componentState": sfizz_component_state(derived_path)
+            }
+        })
+    };
 
     let tracks = settings
         .get_mut("tracks")
@@ -1082,6 +1201,21 @@ pub fn apply(
             .and_then(Value::as_str)
             .is_some_and(|id| id.starts_with(KEYSWITCH_EID_PREFIX))
     });
+
+    // Real Parts that happen to share a literal Instrument id (several
+    // same-sound tracks like three guitars all id="guitar-nylon", which
+    // MuseScore itself is fine with for notation purposes) collide once
+    // Mixer binding enters the picture, the same way the synthetic
+    // keyswitch staves used to before they got a unique suffix - see
+    // inject_keyswitches' own uniquification step. The mscx side is
+    // already rewritten at this point (entries[mscx_index] above); this
+    // mirrors the same new id onto each real track's own audiosettings.json
+    // entry so the two stay in sync.
+    let real_instrument_ids: HashMap<&str, &str> = inject_result
+        .real_instrument_ids
+        .iter()
+        .map(|(part_id, instrument_id)| (part_id.as_str(), instrument_id.as_str()))
+        .collect();
 
     // The real/visible track is muted, not silenced note-by-note - the
     // hidden keyswitch staff now carries a full copy of the actual
@@ -1102,21 +1236,28 @@ pub fn apply(
         if !part_ids.iter().any(|p| p == &part_id) {
             continue;
         }
+        let unique_path = unique_keyswitch_copy(&keyswitch.derived_path, &format!("r{part_id}"))?;
         if let Some(obj) = track.as_object_mut() {
-            obj.insert("in".to_string(), sfizz_in.clone());
+            obj.insert("in".to_string(), sfizz_in_for(&unique_path));
             obj.insert(
                 "soloMuteState".to_string(),
                 serde_json::json!({ "mute": true, "solo": false })
             );
+            if let Some(&new_id) = real_instrument_ids.get(part_id.as_str()) {
+                obj.insert("instrumentId".to_string(), Value::String(new_id.to_string()));
+            }
         }
         applied += 1;
     }
 
     // Give each new hidden keyswitch staff its OWN Mixer track entry,
-    // pointed at the SAME sfizz+derived-sfz assignment - its own separate
-    // plugin instance is fine here, since this staff's own content
-    // contains everything it needs (switch + real notes together), with
-    // no dependency on sharing state with the muted real track.
+    // pointed at its own copy of the same derived-sfz content (see
+    // unique_keyswitch_copy - byte-identical content is fine, an
+    // identical componentState blob across multiple hidden tracks is
+    // not). Its own separate plugin instance is fine here, since this
+    // staff's own content contains everything it needs (switch + real
+    // notes together), with no dependency on sharing state with the
+    // muted real track.
     //
     // instrumentId here MUST match the Instrument id actually written
     // into the mscx (mscx_instrument_id from inject_keyswitches) -
@@ -1141,8 +1282,9 @@ pub fn apply(
         .position(|t| t.get("instrumentId").and_then(Value::as_str) == Some("metronome"))
         .unwrap_or(tracks.len());
     for (offset, (new_part_id, mscx_instrument_id)) in inject_result.new_parts.iter().enumerate() {
+        let unique_path = unique_keyswitch_copy(&keyswitch.derived_path, &format!("k{new_part_id}"))?;
         tracks.insert(insert_at + offset, serde_json::json!({
-            "in": sfizz_in,
+            "in": sfizz_in_for(&unique_path),
             "instrumentId": mscx_instrument_id,
             "out": {
                 "auxSends": [
