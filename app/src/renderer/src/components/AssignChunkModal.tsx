@@ -186,9 +186,20 @@ export default function AssignChunkModal({
     }
   }
 
+  // Enter anywhere in the form assigns, same as clicking the button below -
+  // useful when assigning several samples in a row (round-robin takes,
+  // stereo pairs) and not wanting to reach for the mouse each time.
+  // Disabled fields' own native behavior (nothing happens on Enter) is
+  // mirrored here via the canSave guard, so this never bypasses validation.
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>): void {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    if (canSave) save()
+  }
+
   return (
     <div className="import-modal__backdrop" onClick={onClose}>
-      <div className="import-modal" onClick={(e) => e.stopPropagation()}>
+      <div className="import-modal" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
         <div className="import-modal__header">
           <h2>assign sample</h2>
           <button type="button" className="import-modal__close" onClick={onClose} aria-label="Close">
