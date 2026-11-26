@@ -62,6 +62,61 @@ const MIN_CHUNK_MS: f64 = 120.0;
 const PAD_START_MS: f64 = 12.0;
 const PAD_END_MS: f64 = 150.0;
 
+// Attack (onset) detection - a second, independent way to start a new
+// chunk, alongside the silence-gap logic above. A quiet/sustained recording
+// (e.g. a soft dynamic layer, or one with persistent room tone) can have a
+// decay tail or ambient floor that never drops below the silence threshold
+// within MIN_SILENCE_MS, so two genuinely separate notes get merged into
+// one giant run with nothing ever splitting them. A real attack's level
+// rises far faster than any expressive swell or decay - tens of dB within
+// milliseconds - so a sharp-enough rise is itself evidence of a new note
+// starting, independent of whether the preceding content ever went silent.
+//
+// How far back to compare when measuring a rise. Short enough that only a
+// genuinely fast attack (not a gradual swell) can produce a large value
+// over it, long enough to not be fooled by single-window noise spikes.
+const ATTACK_LOOKBACK_MS: f64 = 20.0;
+// How much a window must have risen over ATTACK_LOOKBACK_MS to count as an
+// attack. Tuned against real recordings spanning quiet to loud dynamic
+// layers - the dB jump a genuine attack produces scales with how loud that
+// layer is overall, so a single fixed value can't land exactly on every
+// real attack in every layer. Biased low (more sensitive) deliberately:
+// missing a real attack silently merges two notes into one chunk, which is
+// far worse than an occasional spurious extra split, since the latter is
+// obvious and easy to delete/merge by hand while the former just looks like
+// a single oddly-long take.
+const ATTACK_RISE_DB: f64 = 14.0;
+// Once an onset fires, further onsets are suppressed for this long - a
+// single real attack's own rise can cross the threshold at more than one
+// window as it ramps up, and without this they'd be counted (and split on)
+// as separate notes. Set well below the expected spacing between genuinely
+// distinct notes in a one-sound-per-take recording, so it only ever
+// collapses re-triggers within one attack, never merges two real ones.
+const ATTACK_REFRACTORY_MS: f64 = 3000.0;
+
+// Per-window onset flags: true where that window's level rose sharply
+// enough over the preceding ATTACK_LOOKBACK_MS to count as a new attack -
+// see the ATTACK_* constants above for why this exists and how they were
+// chosen.
+fn detect_onsets(window_dbfs: &[f64]) -> Vec<bool> {
+    let lookback = ((ATTACK_LOOKBACK_MS / ANALYSIS_WINDOW_MS).round() as usize).max(1);
+    let refractory_windows = ((ATTACK_REFRACTORY_MS / ANALYSIS_WINDOW_MS).round() as usize).max(1);
+    let mut onset = vec![false; window_dbfs.len()];
+    let mut last_onset: Option<usize> = None;
+    for i in lookback..window_dbfs.len() {
+        if let Some(last) = last_onset {
+            if i - last < refractory_windows {
+                continue;
+            }
+        }
+        if window_dbfs[i] - window_dbfs[i - lookback] >= ATTACK_RISE_DB {
+            onset[i] = true;
+            last_onset = Some(i);
+        }
+    }
+    onset
+}
+
 #[derive(Serialize)]
 pub struct ChunkSummary {
     #[serde(rename = "fileName")]
@@ -162,6 +217,8 @@ fn detect_chunks(raw: &RawSamples, spec: &WavSpec) -> Vec<(usize, usize)> {
     let floor_dbfs = noise_floor_dbfs(&window_rms);
     let threshold = 10f64.powf(silence_threshold_dbfs(floor_dbfs) / 20.0);
     let window_silent: Vec<bool> = window_rms.iter().map(|&rms| rms < threshold).collect();
+    let window_dbfs: Vec<f64> = window_rms.iter().map(|&rms| rms_to_dbfs(rms)).collect();
+    let window_onset = detect_onsets(&window_dbfs);
     // A run must peak at least this far above the floor to be accepted as a
     // real sound, not just a window-by-window nudge over the (much lower)
     // boundary threshold above - see PEAK_ACCEPTANCE_MARGIN_DB.
@@ -174,7 +231,11 @@ fn detect_chunks(raw: &RawSamples, spec: &WavSpec) -> Vec<(usize, usize)> {
 
     // First pass: raw (unpadded) non-silent runs, as window-index ranges,
     // merging across any silent gap shorter than min_silence_windows so a
-    // momentary dip mid-note doesn't split one sound into two.
+    // momentary dip mid-note doesn't split one sound into two. A detected
+    // attack (see detect_onsets) also ends the current run immediately,
+    // even mid-non-silent-stretch with no gap at all - this is what lets a
+    // new note start its own chunk when the previous one's decay/ambient
+    // floor never actually reached the silence threshold.
     let mut raw_runs: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
     while i < window_count {
@@ -183,8 +244,15 @@ fn detect_chunks(raw: &RawSamples, spec: &WavSpec) -> Vec<(usize, usize)> {
             continue;
         }
         let run_start = i;
-        let mut run_end = i + 1;
-        loop {
+        let mut run_end = run_start;
+        'grow: loop {
+            while run_end < window_count && !window_silent[run_end] {
+                if run_end != run_start && window_onset[run_end] {
+                    break 'grow;
+                }
+                run_end += 1;
+            }
+
             let gap_start = run_end;
             let mut gap_end = run_end;
             while gap_end < window_count && window_silent[gap_end] {
@@ -195,9 +263,6 @@ fn detect_chunks(raw: &RawSamples, spec: &WavSpec) -> Vec<(usize, usize)> {
             }
             // Short gap - absorb it and keep extending the run past it.
             run_end = gap_end;
-            while run_end < window_count && !window_silent[run_end] {
-                run_end += 1;
-            }
         }
         raw_runs.push((run_start, run_end));
         i = run_end;
@@ -235,6 +300,105 @@ fn detect_chunks(raw: &RawSamples, spec: &WavSpec) -> Vec<(usize, usize)> {
     }
 
     chunks
+}
+
+// A chunk whose own peak sits well below the *typical* peak across every
+// chunk from this same take is almost certainly not a musical note - a
+// pre-roll mic bump, chair creak, or bit of room noise loud enough to pass
+// the per-run peak-acceptance gate above (which only rejects things close
+// to the noise floor) but far quieter than the notes the take was actually
+// recorded for. Real notes, even across different pitches/strings, cluster
+// within a modest band of each other, so an outlier this much
+// quieter than its neighbors stands out clearly. Comparing against this
+// take's own median (not a fixed absolute level) is what lets this work
+// the same way for a quiet dynamic layer as a loud one.
+const NON_NOTE_PEAK_MARGIN_DB: f64 = 18.0;
+// Only worth comparing against a population large enough for the median to
+// be meaningful - skip entirely for a handful of chunks.
+const NON_NOTE_FILTER_MIN_CHUNKS: usize = 4;
+
+fn drop_non_musical_chunks(
+    chunks: Vec<(usize, usize)>,
+    raw: &RawSamples,
+    channels: usize,
+    bits_per_sample: u16
+) -> Vec<(usize, usize)> {
+    if chunks.len() < NON_NOTE_FILTER_MIN_CHUNKS {
+        return chunks;
+    }
+
+    let peaks_dbfs: Vec<f64> = chunks
+        .iter()
+        .map(|&(start, end)| {
+            let mut peak = 0f64;
+            for frame in start..end {
+                peak = peak.max(frame_peak(raw, frame, channels, bits_per_sample));
+            }
+            rms_to_dbfs(peak)
+        })
+        .collect();
+
+    let mut sorted_peaks = peaks_dbfs.clone();
+    sorted_peaks.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_peak_dbfs = sorted_peaks[sorted_peaks.len() / 2];
+
+    chunks
+        .into_iter()
+        .zip(peaks_dbfs)
+        .filter(|&(_, peak_dbfs)| peak_dbfs >= median_peak_dbfs - NON_NOTE_PEAK_MARGIN_DB)
+        .map(|(range, _)| range)
+        .collect()
+}
+
+// A chunk's own start can still carry a stretch of ambient/room-tone
+// content that isn't the actual note - either the adaptive silence
+// threshold (deliberately kept low so a quiet decay tail is tracked all
+// the way down, see SILENCE_THRESHOLD_*) let a run begin on ambient noise
+// that happened to sit just above it, or (since ATTACK_RISE_DB is tuned
+// sensitive - better an extra split than a merged note) an onset fired on
+// an ambient blip shortly before the real attack, close enough that the
+// refractory period then suppressed the real attack's own onset. Either
+// way, the fix is the same: trim the chunk's start forward to wherever its
+// own content first gets close to its own peak level - i.e. the real
+// attack - rather than trying to special-case which cause produced it.
+const LEAD_IN_TRIM_MARGIN_DB: f64 = 15.0;
+
+fn trim_leading_ambience(
+    chunks: Vec<(usize, usize)>,
+    raw: &RawSamples,
+    channels: usize,
+    bits_per_sample: u16,
+    sample_rate: u32
+) -> Vec<(usize, usize)> {
+    let window_frames = ((sample_rate as f64 * ANALYSIS_WINDOW_MS / 1000.0) as usize).max(1);
+    let pad_start_frames = (sample_rate as f64 * PAD_START_MS / 1000.0) as usize;
+
+    chunks
+        .into_iter()
+        .map(|(start, end)| {
+            let mut peak = 0f64;
+            for frame in start..end {
+                peak = peak.max(frame_peak(raw, frame, channels, bits_per_sample));
+            }
+            let peak_dbfs = rms_to_dbfs(peak);
+            let near_peak_dbfs = peak_dbfs - LEAD_IN_TRIM_MARGIN_DB;
+
+            let mut window_start = start;
+            while window_start < end {
+                let window_end = (window_start + window_frames).min(end);
+                let mut window_peak = 0f64;
+                for frame in window_start..window_end {
+                    window_peak = window_peak.max(frame_peak(raw, frame, channels, bits_per_sample));
+                }
+                if rms_to_dbfs(window_peak) >= near_peak_dbfs {
+                    break;
+                }
+                window_start = window_end;
+            }
+
+            (start.max(window_start.saturating_sub(pad_start_frames)), end)
+        })
+        .collect()
 }
 
 pub fn chunk_wav(sfz_path: &Path, source_path: &Path, base_name: &str) -> Result<Vec<ChunkSummary>, String> {
@@ -276,6 +440,11 @@ pub fn chunk_wav(sfz_path: &Path, source_path: &Path, base_name: &str) -> Result
     if ranges.is_empty() {
         return Err("no non-silent audio found in the source file".to_string());
     }
+    let ranges = drop_non_musical_chunks(ranges, &raw, spec.channels as usize, spec.bits_per_sample);
+    if ranges.is_empty() {
+        return Err("no non-silent audio found in the source file".to_string());
+    }
+    let ranges = trim_leading_ambience(ranges, &raw, spec.channels as usize, spec.bits_per_sample, spec.sample_rate);
 
     let existing: HashSet<String> = fs::read_dir(&dest_dir)
         .map_err(|e| format!("failed to read destination directory: {e}"))?
@@ -333,6 +502,119 @@ pub fn chunk_wav(sfz_path: &Path, source_path: &Path, base_name: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A chunk whose start carries a stretch of ambient noise before the
+    // real attack (e.g. because an onset fired a bit early on a jittery
+    // room-tone blip, or an old-fashioned silence-threshold run start began
+    // slightly ahead of the true note) must be trimmed forward to the real
+    // attack, leaving only a small PAD_START_MS lead-in - not the whole
+    // ambient stretch.
+    #[test]
+    fn trims_ambient_lead_in_to_near_the_real_attack() {
+        let sample_rate = 44_100u32;
+        let ambient_amp = 10f64.powf(-60.0 / 20.0) as f32;
+        let note_peak_amp = 10f64.powf(-10.0 / 20.0) as f32;
+
+        let mut samples: Vec<f32> = Vec::new();
+        let ambient_frames = sample_rate as usize; // 1s of ambient lead-in
+        samples.extend(std::iter::repeat(ambient_amp).take(ambient_frames));
+        let attack_at = samples.len();
+        samples.extend(std::iter::repeat(note_peak_amp).take(sample_rate as usize));
+
+        let chunk = (0usize, samples.len());
+        let raw = RawSamples::Float(samples);
+        let trimmed = trim_leading_ambience(vec![chunk], &raw, 1, 32, sample_rate);
+
+        assert_eq!(trimmed.len(), 1);
+        let (start, end) = trimmed[0];
+        assert_eq!(end, chunk.1, "end must be untouched");
+        let pad_start_frames = (sample_rate as f64 * PAD_START_MS / 1000.0) as usize;
+        assert!(
+            start > attack_at.saturating_sub(pad_start_frames) - 1 && start <= attack_at,
+            "expected start ({start}) to land within one window of the real attack ({attack_at}), not back in the ambient lead-in"
+        );
+    }
+
+    // A pre-roll mic bump far quieter than the real notes around it must be
+    // dropped, while the real notes (which vary somewhat in level from each
+    // other, as different pitches/strings naturally do) must all survive.
+    #[test]
+    fn a_quiet_outlier_chunk_is_dropped_but_real_notes_survive() {
+        let mut raw_samples: Vec<f32> = Vec::new();
+        let mut ranges = Vec::new();
+
+        let mut push_chunk = |amp: f32, len: usize, raw: &mut Vec<f32>, ranges: &mut Vec<(usize, usize)>| {
+            let start = raw.len();
+            raw.extend(std::iter::repeat(amp).take(len));
+            ranges.push((start, raw.len()));
+        };
+
+        let bump_amp = 10f64.powf(-35.0 / 20.0) as f32;
+        push_chunk(bump_amp, 4410, &mut raw_samples, &mut ranges); // the artifact
+
+        // Five real notes at varying (but comparable) levels - the natural
+        // spread real notes have across different pitches/strings.
+        for peak_db in [-8.0, -11.0, -9.0, -12.0, -7.5] {
+            let amp = 10f64.powf(peak_db / 20.0) as f32;
+            push_chunk(amp, 44_100, &mut raw_samples, &mut ranges);
+        }
+        let raw = RawSamples::Float(raw_samples);
+        let after = drop_non_musical_chunks(ranges.clone(), &raw, 1, 32);
+        assert_eq!(after.len(), 5, "expected only the 5 real notes to survive, got {after:?}");
+        assert!(!after.contains(&ranges[0]), "the quiet bump should have been dropped");
+    }
+
+    // Reproduces the real bug: two notes whose decay/ambient never actually
+    // drops below the silence threshold within MIN_SILENCE_MS (e.g. a quiet
+    // dynamic layer recorded with persistent room tone) must still split
+    // into separate chunks at the second note's attack, not merge into one.
+    #[test]
+    fn two_notes_with_no_silence_gap_still_split_at_the_second_attack() {
+        let sample_rate = 44_100u32;
+        let floor_amp = 10f64.powf(-56.0 / 20.0) as f32;
+        // Decays down to this level and holds - well above the silence
+        // threshold (floor+9dB, clamped to at most -35dBFS), so the
+        // pre-existing silence-gap logic alone would never split here.
+        let sustained_tail_amp = 10f64.powf(-30.0 / 20.0) as f32;
+        let note_peak_amp = 10f64.powf(-6.0 / 20.0) as f32;
+
+        let mut samples: Vec<f32> = Vec::new();
+        samples.extend(std::iter::repeat(floor_amp).take(sample_rate as usize));
+        // First note: sharp attack, then a tail that never goes silent.
+        samples.extend(std::iter::repeat(note_peak_amp).take(sample_rate as usize / 10));
+        samples.extend(std::iter::repeat(sustained_tail_amp).take(sample_rate as usize * 4));
+        // Second note: another sharp attack, same non-silent tail.
+        samples.extend(std::iter::repeat(note_peak_amp).take(sample_rate as usize / 10));
+        samples.extend(std::iter::repeat(sustained_tail_amp).take(sample_rate as usize * 4));
+        samples.extend(std::iter::repeat(floor_amp).take(sample_rate as usize));
+
+        let raw = RawSamples::Float(samples);
+        let chunks = detect_chunks(&raw, &make_spec(sample_rate));
+        assert_eq!(chunks.len(), 2, "expected the second attack to split off its own chunk, got {chunks:?}");
+    }
+
+    // A gradual crescendo swell must not be mistaken for an attack - only a
+    // genuinely fast rise should ever split a run.
+    #[test]
+    fn a_gradual_swell_does_not_trigger_a_false_split() {
+        let sample_rate = 44_100u32;
+        let floor_amp = 10f64.powf(-56.0 / 20.0) as f32;
+        let peak_amp = 10f64.powf(-10.0 / 20.0) as f32;
+
+        let mut samples: Vec<f32> = Vec::new();
+        samples.extend(std::iter::repeat(floor_amp).take(sample_rate as usize));
+        samples.push(peak_amp); // one sharp attack to start the one real note
+        let swell_frames = sample_rate as usize * 3; // 3s swell - far slower than any real attack
+        for i in 0..swell_frames {
+            let t = i as f64 / swell_frames as f64;
+            samples.push((peak_amp as f64 * (0.3 + 0.7 * t)) as f32);
+        }
+        samples.extend(std::iter::repeat(floor_amp).take(sample_rate as usize));
+
+        let raw = RawSamples::Float(samples);
+        let chunks = detect_chunks(&raw, &make_spec(sample_rate));
+        assert_eq!(chunks.len(), 1, "a gradual swell must not be split into multiple chunks, got {chunks:?}");
+    }
 
     fn make_spec(sample_rate: u32) -> WavSpec {
         WavSpec {
