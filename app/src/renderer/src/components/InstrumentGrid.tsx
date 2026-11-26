@@ -23,6 +23,10 @@ function isAxis(value: string): value is Axis {
 
 interface Props {
   instrument: Instrument
+  // Whether an .sfz is actually open - distinguishes a genuinely empty
+  // instrument (opened, just has no regions yet) from nothing being open
+  // at all, since `instrument` alone looks the same (no axes) in both cases.
+  fileOpen: boolean
   selectedCell: CellRecord | null
   onSelectCell: (cell: CellRecord) => void
 }
@@ -114,6 +118,7 @@ interface Block {
 
 export default function InstrumentGrid({
   instrument,
+  fileOpen,
   selectedCell,
   onSelectCell
 }: Props): React.JSX.Element {
@@ -245,7 +250,9 @@ export default function InstrumentGrid({
     return (
       <div className="instrument-grid">
         <div className="instrument-grid__empty">
-          no instrument loaded - click open to choose an .sfz file
+          {fileOpen
+            ? 'the current instrument has no samples'
+            : 'no instrument loaded - click open to choose an .sfz file'}
         </div>
       </div>
     )

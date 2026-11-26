@@ -618,6 +618,7 @@ export default function App(): React.JSX.Element {
         <InstrumentGrid
           key={loadGeneration}
           instrument={instrument}
+          fileOpen={sfzFilePath !== null}
           selectedCell={selectedCell}
           onSelectCell={setSelectedCell}
         />
