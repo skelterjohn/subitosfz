@@ -19,3 +19,61 @@
   opacity: 0.5;
   cursor: default;
 }
+
+.assign-modal__preset-group {
+  flex-shrink: 0;
+  display: flex;
+}
+
+.assign-modal__preset {
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid #ccc;
+  background: #f2f2f2;
+  color: #333;
+  /* Evokes the bold italic serif engraving traditionally used for
+     dynamics markings (p/mp/mf/f) in printed scores. */
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+/* Adjacent, shared borders (radio-group look) - each button after the
+   first pulls left by its left border's width so borders overlap instead
+   of doubling up, with rounded outer corners only on the two end buttons. */
+.assign-modal__preset + .assign-modal__preset {
+  margin-left: -1px;
+}
+
+.assign-modal__preset:first-child {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.assign-modal__preset:last-child {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.assign-modal__preset:hover {
+  position: relative;
+  z-index: 1;
+  background: #e4e4e4;
+}
+
+.assign-modal__preset--active {
+  position: relative;
+  z-index: 1;
+  background: #4a7fd9;
+  border-color: #3a6bc0;
+  color: white;
+}
+
+.assign-modal__preset--active:hover {
+  background: #3a6bc0;
+}

@@ -7,6 +7,21 @@ import './AssignChunkModal.css'
 
 const NEW_ARTICULATION = '__new__'
 
+// MuseScore assigns each dynamic marking a fixed default playback velocity
+// (p=49, mp=64, mf=80, f=96, from its own internal dynamics table) - these
+// presets are contiguous bands centered on those values (split at the
+// midpoints between neighbors, with the outer two extended to the ends of
+// the 1-127 range) so every velocity MuseScore could actually emit for one
+// of these four markings - including hairpin/humanize jitter around the
+// nominal value - lands in exactly one band, with no silent gaps between
+// layers.
+const VELOCITY_PRESETS: Array<{ label: string; loVel: number; hiVel: number }> = [
+  { label: 'p', loVel: 1, hiVel: 56 },
+  { label: 'mp', loVel: 57, hiVel: 72 },
+  { label: 'mf', loVel: 73, hiVel: 88 },
+  { label: 'f', loVel: 89, hiVel: 127 }
+]
+
 type Status = 'idle' | 'saving' | 'error'
 
 interface Props {
@@ -330,6 +345,25 @@ export default function AssignChunkModal({
                 value={hiVel}
                 onChange={(e) => setHiVel(Number(e.target.value))}
               />
+              <div className="assign-modal__preset-group">
+                {VELOCITY_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    className={
+                      preset.loVel === loVel && preset.hiVel === hiVel
+                        ? 'assign-modal__preset assign-modal__preset--active'
+                        : 'assign-modal__preset'
+                    }
+                    onClick={() => {
+                      setLoVel(preset.loVel)
+                      setHiVel(preset.hiVel)
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
               {!velRangeValid && <span className="import-modal__path">invalid</span>}
             </div>
           </section>
