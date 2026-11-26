@@ -290,7 +290,7 @@ pub fn chunk_wav(sfz_path: &Path, source_path: &Path, base_name: &str) -> Result
 
     for (start_frame, end_frame) in ranges {
         let file_name = loop {
-            let candidate = format!("{:03}_{}.wav", index, safe_base);
+            let candidate = format!("{}_{:03}.wav", safe_base, index);
             index += 1;
             if !existing.contains(&candidate) {
                 break candidate;
