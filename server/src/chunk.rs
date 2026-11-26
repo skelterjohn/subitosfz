@@ -73,9 +73,14 @@ const PAD_END_MS: f64 = 150.0;
 // starting, independent of whether the preceding content ever went silent.
 //
 // How far back to compare when measuring a rise. Short enough that only a
-// genuinely fast attack (not a gradual swell) can produce a large value
-// over it, long enough to not be fooled by single-window noise spikes.
-const ATTACK_LOOKBACK_MS: f64 = 20.0;
+// genuinely fast attack (not a gradual swell, which takes whole seconds -
+// see the permanent test for that) can produce a large value over it, long
+// enough to not be fooled by single-window noise spikes, and long enough to
+// still catch an attack that itself ramps up over several windows (a real
+// one confirmed on a quiet recording: no single 20ms slice of its ~100ms
+// ramp crossed a rise threshold, even though the full ramp obviously did)
+// rather than only the steepest single slice of it.
+const ATTACK_LOOKBACK_MS: f64 = 60.0;
 // How much a window must have risen over ATTACK_LOOKBACK_MS to count as an
 // attack. Tuned against real recordings spanning quiet to loud dynamic
 // layers - the dB jump a genuine attack produces scales with how loud that
@@ -362,6 +367,17 @@ fn drop_non_musical_chunks(
 // own content first gets close to its own peak level - i.e. the real
 // attack - rather than trying to special-case which cause produced it.
 const LEAD_IN_TRIM_MARGIN_DB: f64 = 15.0;
+// A momentary handling noise (fret/finger release, pick click) can spike
+// close to the chunk's own peak level for a single window, which a bare
+// level-crossing check would then mistake for the real attack. The real
+// attack, once it starts, keeps ringing for a bit - a brief transient has
+// already fallen back to ambient well before this much time has passed.
+// Short deliberately: a genuine attack (especially a quiet, fast-decaying
+// one) can lose many dB within a couple hundred ms, and requiring it to
+// still be this loud that much later would reject real attacks too - see
+// the fallback below for what happens when even this modest a sustain
+// can't be confirmed.
+const LEAD_IN_SUSTAIN_CHECK_MS: f64 = 80.0;
 
 fn trim_leading_ambience(
     chunks: Vec<(usize, usize)>,
@@ -372,10 +388,24 @@ fn trim_leading_ambience(
 ) -> Vec<(usize, usize)> {
     let window_frames = ((sample_rate as f64 * ANALYSIS_WINDOW_MS / 1000.0) as usize).max(1);
     let pad_start_frames = (sample_rate as f64 * PAD_START_MS / 1000.0) as usize;
+    let sustain_frames = (sample_rate as f64 * LEAD_IN_SUSTAIN_CHECK_MS / 1000.0) as usize;
 
     chunks
         .into_iter()
         .map(|(start, end)| {
+            if end <= start {
+                return (start, end);
+            }
+
+            let window_peak_dbfs = |window_start: usize| -> f64 {
+                let window_end = (window_start + window_frames).min(end);
+                let mut peak = 0f64;
+                for frame in window_start..window_end {
+                    peak = peak.max(frame_peak(raw, frame, channels, bits_per_sample));
+                }
+                rms_to_dbfs(peak)
+            };
+
             let mut peak = 0f64;
             for frame in start..end {
                 peak = peak.max(frame_peak(raw, frame, channels, bits_per_sample));
@@ -383,20 +413,32 @@ fn trim_leading_ambience(
             let peak_dbfs = rms_to_dbfs(peak);
             let near_peak_dbfs = peak_dbfs - LEAD_IN_TRIM_MARGIN_DB;
 
+            // The sustained crossing is the preferred trim point (skips
+            // past a transient blip); if a fast decay means nothing ever
+            // sustains long enough to confirm, fall back to the first bare
+            // crossing instead of collapsing the chunk - still better than
+            // leaving the full ambient lead-in in place. If even that never
+            // happens (near_peak_dbfs unreachable for some reason), leave
+            // the chunk untouched entirely rather than risk losing it.
+            let mut first_crossing: Option<usize> = None;
+            let mut sustained_crossing: Option<usize> = None;
             let mut window_start = start;
             while window_start < end {
-                let window_end = (window_start + window_frames).min(end);
-                let mut window_peak = 0f64;
-                for frame in window_start..window_end {
-                    window_peak = window_peak.max(frame_peak(raw, frame, channels, bits_per_sample));
+                if window_peak_dbfs(window_start) >= near_peak_dbfs {
+                    if first_crossing.is_none() {
+                        first_crossing = Some(window_start);
+                    }
+                    let check_at = (window_start + sustain_frames).min(end.saturating_sub(1));
+                    if window_peak_dbfs(check_at) >= near_peak_dbfs {
+                        sustained_crossing = Some(window_start);
+                        break;
+                    }
                 }
-                if rms_to_dbfs(window_peak) >= near_peak_dbfs {
-                    break;
-                }
-                window_start = window_end;
+                window_start += window_frames;
             }
 
-            (start.max(window_start.saturating_sub(pad_start_frames)), end)
+            let trim_point = sustained_crossing.or(first_crossing).unwrap_or(start);
+            (start.max(trim_point.saturating_sub(pad_start_frames)), end)
         })
         .collect()
 }
@@ -503,6 +545,37 @@ pub fn chunk_wav(sfz_path: &Path, source_path: &Path, base_name: &str) -> Result
 mod tests {
     use super::*;
 
+    // A brief handling noise (fret/finger release, pick click) can spike
+    // close to the chunk's own peak level for a moment and then immediately
+    // fall back - it must not be mistaken for the real attack, which keeps
+    // ringing well past it.
+    #[test]
+    fn a_transient_handling_noise_does_not_fool_the_lead_in_trim() {
+        let sample_rate = 44_100u32;
+        let ambient_amp = 10f64.powf(-60.0 / 20.0) as f32;
+        let blip_amp = 10f64.powf(-30.0 / 20.0) as f32; // close to the eventual note peak
+        let note_peak_amp = 10f64.powf(-20.0 / 20.0) as f32;
+
+        let mut samples: Vec<f32> = Vec::new();
+        samples.extend(std::iter::repeat(ambient_amp).take(sample_rate as usize / 2));
+        // Brief transient: one window's worth, then straight back to ambient.
+        samples.extend(std::iter::repeat(blip_amp).take(441));
+        samples.extend(std::iter::repeat(ambient_amp).take(sample_rate as usize / 2));
+        let attack_at = samples.len();
+        samples.extend(std::iter::repeat(note_peak_amp).take(sample_rate as usize));
+
+        let chunk = (0usize, samples.len());
+        let raw = RawSamples::Float(samples);
+        let trimmed = trim_leading_ambience(vec![chunk], &raw, 1, 32, sample_rate);
+
+        assert_eq!(trimmed.len(), 1);
+        let (start, _) = trimmed[0];
+        assert!(
+            start >= attack_at.saturating_sub(4410),
+            "expected the trim to skip past the handling noise to the real attack ({attack_at}), got start={start}"
+        );
+    }
+
     // A chunk whose start carries a stretch of ambient noise before the
     // real attack (e.g. because an onset fired a bit early on a jittery
     // room-tone blip, or an old-fashioned silence-threshold run start began
@@ -591,6 +664,39 @@ mod tests {
         let raw = RawSamples::Float(samples);
         let chunks = detect_chunks(&raw, &make_spec(sample_rate));
         assert_eq!(chunks.len(), 2, "expected the second attack to split off its own chunk, got {chunks:?}");
+    }
+
+    // A real attack doesn't always reach its peak within one short window -
+    // a quiet pluck can ramp up gradually over ~100ms, where no single
+    // ATTACK_LOOKBACK_MS-wide slice of the ramp crosses ATTACK_RISE_DB even
+    // though the full ramp obviously does. This must still split, not get
+    // silently merged into the previous note the way a too-short lookback
+    // would miss it (found on a real quiet recording).
+    #[test]
+    fn a_gradually_ramping_attack_still_splits() {
+        let sample_rate = 44_100u32;
+        let floor_amp = 10f64.powf(-56.0 / 20.0) as f32;
+        let sustained_tail_amp = 10f64.powf(-30.0 / 20.0) as f32;
+        let note_peak_amp = 10f64.powf(-6.0 / 20.0) as f32;
+        let ramp_frames = sample_rate as usize / 10; // 100ms ramp, not instant
+
+        let mut samples: Vec<f32> = Vec::new();
+        samples.extend(std::iter::repeat(floor_amp).take(sample_rate as usize));
+        samples.extend(std::iter::repeat(note_peak_amp).take(sample_rate as usize / 10));
+        samples.extend(std::iter::repeat(sustained_tail_amp).take(sample_rate as usize * 4));
+        // Second note's attack ramps in gradually over 100ms instead of
+        // jumping straight to peak.
+        for i in 0..ramp_frames {
+            let t = i as f64 / ramp_frames as f64;
+            let amp = sustained_tail_amp as f64 + (note_peak_amp as f64 - sustained_tail_amp as f64) * t;
+            samples.push(amp as f32);
+        }
+        samples.extend(std::iter::repeat(sustained_tail_amp).take(sample_rate as usize * 4));
+        samples.extend(std::iter::repeat(floor_amp).take(sample_rate as usize));
+
+        let raw = RawSamples::Float(samples);
+        let chunks = detect_chunks(&raw, &make_spec(sample_rate));
+        assert_eq!(chunks.len(), 2, "expected the gradually-ramping second attack to still split off its own chunk, got {chunks:?}");
     }
 
     // A gradual crescendo swell must not be mistaken for an attack - only a
