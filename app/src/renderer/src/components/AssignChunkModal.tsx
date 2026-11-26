@@ -125,6 +125,17 @@ export default function AssignChunkModal({
     source.start()
   }
 
+  // Widens the key range rather than leaving it stale - a pitch outside the
+  // current lo/hi otherwise silently makes the cell unreachable at its own
+  // assigned note, which is never what's intended.
+  function handleNoteChange(value: number): void {
+    setNote(value)
+    if (Number.isInteger(value) && value >= 0 && value <= 127) {
+      setLoKey((prev) => Math.min(prev, value))
+      setHiKey((prev) => Math.max(prev, value))
+    }
+  }
+
   const isNewArticulation = articulationChoice === NEW_ARTICULATION
   const articulationId = isNewArticulation ? newArticulationId.trim() : articulationChoice
   const articulationLabel = isNewArticulation
@@ -264,7 +275,7 @@ export default function AssignChunkModal({
                 min={0}
                 max={127}
                 value={note}
-                onChange={(e) => setNote(Number(e.target.value))}
+                onChange={(e) => handleNoteChange(Number(e.target.value))}
               />
               <span className="import-modal__path">{noteValid ? midiToName(note) : 'invalid'}</span>
             </div>
