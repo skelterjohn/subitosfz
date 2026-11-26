@@ -102,6 +102,7 @@ export default function AssignChunkModal({
         if (cancelled) return
         bufferRef.current = audioBuffer
         setPlaybackReady(true)
+        play() // hear what's being assigned as soon as the modal opens
       } catch {
         // Leave playbackReady false - the play button just stays disabled.
       }
