@@ -136,6 +136,23 @@ export default function AssignChunkModal({
     }
   }
 
+  // Shared by the pitch field and both key-range fields - PageUp/PageDown
+  // jumps a plain MIDI-number input by an octave instead of the native
+  // single-step behavior that arrow keys already give for free.
+  function octaveStep(
+    e: React.KeyboardEvent<HTMLInputElement>,
+    value: number,
+    onChange: (next: number) => void
+  ): void {
+    if (e.key === 'PageUp') {
+      e.preventDefault()
+      onChange(Math.min(127, value + 12))
+    } else if (e.key === 'PageDown') {
+      e.preventDefault()
+      onChange(Math.max(0, value - 12))
+    }
+  }
+
   const isNewArticulation = articulationChoice === NEW_ARTICULATION
   const articulationId = isNewArticulation ? newArticulationId.trim() : articulationChoice
   const articulationLabel = isNewArticulation
@@ -212,29 +229,26 @@ export default function AssignChunkModal({
     }
   }
 
-  // Enter anywhere in the form assigns, same as clicking the button below -
-  // useful when assigning several samples in a row (round-robin takes,
-  // stereo pairs) and not wanting to reach for the mouse each time.
-  // Disabled fields' own native behavior (nothing happens on Enter) is
-  // mirrored here via the canSave guard, so this never bypasses validation.
-  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>): void {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    if (canSave) save()
-  }
-
-  // A document-level listener, not the form's own onKeyDown below - Escape
-  // needs to close deliberately even when nothing inside the modal happens
-  // to be focused (e.g. right after opening), and onKeyDown only ever sees
-  // events that bubble through a focused descendant. Same pattern as
-  // TopMenuBar's dropdown-dismiss.
+  // A document-level listener, not the form's own onKeyDown - both Enter
+  // and Escape need to act whenever the modal is open at all, even when
+  // nothing inside it happens to be focused (e.g. right after opening), and
+  // a descendant's onKeyDown only ever sees events that bubble through a
+  // focused element. Same pattern as TopMenuBar's dropdown-dismiss. Enter is
+  // still gated by canSave, same as clicking the button would be, so this
+  // never bypasses validation; disabled fields' own native behavior (nothing
+  // happens on Enter) is mirrored here for the same reason.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        if (canSave) save()
+      } else if (e.key === 'Escape') {
+        onClose()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [canSave, onClose, save])
 
   return (
     // No onClick here - this form holds in-progress, unsaved field values
@@ -242,7 +256,7 @@ export default function AssignChunkModal({
     // above), so an accidental click on the backdrop must not discard them.
     // Closing is only via the explicit × button or Escape.
     <div className="import-modal__backdrop">
-      <div className="import-modal" onKeyDown={handleKeyDown}>
+      <div className="import-modal">
         <div className="import-modal__header">
           <h2>assign sample</h2>
           <button type="button" className="import-modal__close" onClick={onClose} aria-label="Close">
@@ -276,15 +290,7 @@ export default function AssignChunkModal({
                 max={127}
                 value={note}
                 onChange={(e) => handleNoteChange(Number(e.target.value))}
-                onKeyDown={(e) => {
-                  if (e.key === 'PageUp') {
-                    e.preventDefault()
-                    handleNoteChange(Math.min(127, note + 12))
-                  } else if (e.key === 'PageDown') {
-                    e.preventDefault()
-                    handleNoteChange(Math.max(0, note - 12))
-                  }
-                }}
+                onKeyDown={(e) => octaveStep(e, note, handleNoteChange)}
               />
               <span className="import-modal__path">{noteValid ? midiToName(note) : 'invalid'}</span>
             </div>
@@ -299,6 +305,7 @@ export default function AssignChunkModal({
                 max={127}
                 value={loKey}
                 onChange={(e) => setLoKey(Number(e.target.value))}
+                onKeyDown={(e) => octaveStep(e, loKey, setLoKey)}
               />
               <span>–</span>
               <input
@@ -307,6 +314,7 @@ export default function AssignChunkModal({
                 max={127}
                 value={hiKey}
                 onChange={(e) => setHiKey(Number(e.target.value))}
+                onKeyDown={(e) => octaveStep(e, hiKey, setHiKey)}
               />
               <span className="import-modal__path">
                 {keyRangeValid ? `${midiToName(loKey)}–${midiToName(hiKey)}` : 'invalid'}
