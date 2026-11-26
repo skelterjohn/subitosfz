@@ -276,6 +276,15 @@ export default function AssignChunkModal({
                 max={127}
                 value={note}
                 onChange={(e) => handleNoteChange(Number(e.target.value))}
+                onKeyDown={(e) => {
+                  if (e.key === 'PageUp') {
+                    e.preventDefault()
+                    handleNoteChange(Math.min(127, note + 12))
+                  } else if (e.key === 'PageDown') {
+                    e.preventDefault()
+                    handleNoteChange(Math.max(0, note - 12))
+                  }
+                }}
               />
               <span className="import-modal__path">{noteValid ? midiToName(note) : 'invalid'}</span>
             </div>
