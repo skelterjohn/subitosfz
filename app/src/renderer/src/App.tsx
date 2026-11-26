@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import TopMenuBar from './components/TopMenuBar'
 import InstrumentGrid from './components/InstrumentGrid'
 import NewInstrumentModal from './components/NewInstrumentModal'
@@ -59,6 +59,9 @@ export default function App(): React.JSX.Element {
   const [instrument, setInstrument] = useState<Instrument>(() => emptyInstrument())
   const [sfzLoadError, setSfzLoadError] = useState<string | null>(null)
   const [selectedCell, setSelectedCell] = useState<CellRecord | null>(null)
+  // Kept alive for the app's lifetime (not recreated per selection) so
+  // clicking through many cells in a row doesn't pile up AudioContexts.
+  const cellPreviewAudioCtxRef = useRef<AudioContext | null>(null)
   const [importRecordingOpen, setImportRecordingOpen] = useState(false)
   const [assigningChunk, setAssigningChunk] = useState<DrawerChunk | null>(null)
   const [drawerChunks, setDrawerChunks] = useState<DrawerChunk[]>([])
@@ -314,6 +317,38 @@ export default function App(): React.JSX.Element {
     setSelectedCell((current) => (current ? findMatchingCell(next, current) : null))
     setDirty(true)
     setLoadGeneration((g) => g + 1)
+  }
+
+  // One-shot preview so clicking around the grid gives an immediate audible
+  // sense of what's assigned where - a stereo pair's two regions are the
+  // same take, so just the first region is enough for identification.
+  async function playRandomSampleFromCell(cell: CellRecord): Promise<void> {
+    if (!sfzFilePath || cell.samples.length === 0) return
+    const take = cell.samples[Math.floor(Math.random() * cell.samples.length)]
+    const region = take.regions[0]
+    if (!region) return
+    try {
+      let ctx = cellPreviewAudioCtxRef.current
+      if (!ctx) {
+        ctx = new AudioContext()
+        cellPreviewAudioCtxRef.current = ctx
+      }
+      const bytes = await window.api.readAudioFile(sfzFilePath, region.samplePath)
+      const arrayBuffer = bytes.slice().buffer as ArrayBuffer
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+      ctx.resume()
+      const source = ctx.createBufferSource()
+      source.buffer = audioBuffer
+      source.connect(ctx.destination)
+      source.start()
+    } catch {
+      // Preview is a nicety, not essential - selection itself must not fail.
+    }
+  }
+
+  function selectCell(cell: CellRecord): void {
+    setSelectedCell(cell)
+    playRandomSampleFromCell(cell)
   }
 
   async function openSfzFile(): Promise<void> {
@@ -620,7 +655,7 @@ export default function App(): React.JSX.Element {
           instrument={instrument}
           fileOpen={sfzFilePath !== null}
           selectedCell={selectedCell}
-          onSelectCell={setSelectedCell}
+          onSelectCell={selectCell}
         />
         <div
           style={{
