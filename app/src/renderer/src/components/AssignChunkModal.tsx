@@ -197,9 +197,26 @@ export default function AssignChunkModal({
     if (canSave) save()
   }
 
+  // A document-level listener, not the form's own onKeyDown below - Escape
+  // needs to close deliberately even when nothing inside the modal happens
+  // to be focused (e.g. right after opening), and onKeyDown only ever sees
+  // events that bubble through a focused descendant. Same pattern as
+  // TopMenuBar's dropdown-dismiss.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
   return (
-    <div className="import-modal__backdrop" onClick={onClose}>
-      <div className="import-modal" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
+    // No onClick here - this form holds in-progress, unsaved field values
+    // (it remounts fresh on every open, see the note/loKey/etc. state init
+    // above), so an accidental click on the backdrop must not discard them.
+    // Closing is only via the explicit × button or Escape.
+    <div className="import-modal__backdrop">
+      <div className="import-modal" onKeyDown={handleKeyDown}>
         <div className="import-modal__header">
           <h2>assign sample</h2>
           <button type="button" className="import-modal__close" onClick={onClose} aria-label="Close">
