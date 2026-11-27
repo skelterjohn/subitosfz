@@ -431,7 +431,10 @@ pub fn set_cell_opcodes(
 #[derive(Serialize)]
 pub struct ArticulationNote {
     pub id: String,
-    pub note: u8,
+    #[serde(rename = "loNote")]
+    pub lo_note: u8,
+    #[serde(rename = "hiNote")]
+    pub hi_note: u8,
 }
 
 #[derive(Serialize)]
@@ -499,20 +502,22 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
     if n == 0 {
         return Err("this sfz has no regions to build a keyswitch zone for".to_string());
     }
-    if n > 128 {
-        return Err("too many distinct articulations for a keyswitch zone (max 128)".to_string());
+    // Halved from the old single-note-per-articulation limit of 128 - the
+    // zone now reserves TWO notes per articulation (see note_lo_for/
+    // note_hi_for below), so it needs twice the room for the same count.
+    if n > 64 {
+        return Err("too many distinct articulations for a keyswitch zone (max 64)".to_string());
     }
     let n16 = n as u16;
+    let zone_size = n16 * 2;
 
-    // Prefer the BOTTOM of the MIDI range (0 upward) - the switch note
-    // and its chord's real note(s) are stacked into one simultaneous
+    // Prefer the BOTTOM of the MIDI range (0 upward) - the switch note(s)
+    // and the chord's real note(s) are stacked into one simultaneous
     // Chord, and simultaneous notes apparently don't dispatch in document
     // order (confirmed by ear: the switch consistently landed after the
     // note it was meant to affect, with the switch note previously placed
-    // at the TOP of the range - i.e. the chord's highest pitch). Pitch-
-    // ascending dispatch would explain that exactly, so the switch note
-    // is now the chord's LOWEST pitch instead, to fire first. Falls back
-    // to the top of the range only if the bottom has no room - a low
+    // at the TOP of the range - i.e. the chord's highest pitch). Falls
+    // back to the top of the range only if the bottom has no room - a low
     // bass/extended-range instrument's own real notes are more likely to
     // collide there than at the very top.
     //
@@ -526,20 +531,43 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
     // realistic multi-sampled instrument report "no room" immediately.
     let lo_bound = parsed.cells.iter().map(|c| c.note).min();
     let hi_bound = parsed.cells.iter().map(|c| c.note).max();
-    let (switch_lo, switch_hi): (u8, u8) = if lo_bound.map(|lo| (lo as u16) >= n16).unwrap_or(true) {
-        (0, (n16 - 1) as u8)
-    } else if hi_bound.map(|hi| (hi as u16) < 128 - n16).unwrap_or(true) {
-        ((128 - n16) as u8, 127)
+    let (switch_lo, switch_hi): (u8, u8) = if lo_bound.map(|lo| (lo as u16) >= zone_size).unwrap_or(true) {
+        (0, (zone_size - 1) as u8)
+    } else if hi_bound.map(|hi| (hi as u16) < 128 - zone_size).unwrap_or(true) {
+        ((128 - zone_size) as u8, 127)
     } else {
         return Err(
             "no room for a keyswitch zone - this instrument already uses the full MIDI range".to_string()
         );
     };
 
-    let note_for: HashMap<&str, u8> = ids
+    // Picking the "lowest pitch in the chord" as the switch note (above)
+    // was itself meant to win a dispatch-order race against the chord's
+    // real note(s), on the theory that simultaneous notes dispatch in
+    // pitch-ascending order - confirmed to help, but not reliably enough:
+    // real scores still showed the first note after a genuine articulation
+    // change sounding like the OLD one, meaning the single lowest-pitch
+    // switch note sometimes still loses that race. Lacking any actual
+    // documentation of MuseScore/the synth's real dispatch order, this
+    // hedges both directions at once instead of betting on one: every
+    // articulation gets TWO reserved notes, one packed from the bottom of
+    // the zone (note_lo_for) and one from the top (note_hi_for) - each
+    // chord then fires both (see inject_keyswitches), so whichever
+    // extreme actually does dispatch first, a switch note is there to win
+    // the race. SFZ's own sw_last only matches a single value per region,
+    // so there's no way for one playable region to respond to either
+    // trigger note - every affected region is instead fully DUPLICATED
+    // (one copy per trigger note) rather than just getting a second
+    // inserted opcode line; see the appended-regions handling below.
+    let note_lo_for: HashMap<&str, u8> = ids
         .iter()
         .enumerate()
         .map(|(i, &id)| (id, switch_lo + i as u8))
+        .collect();
+    let note_hi_for: HashMap<&str, u8> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| (id, switch_lo + n16 as u8 + i as u8))
         .collect();
 
     // Every region's resolved articulation and opcodes, per sfz_parse's own
@@ -560,11 +588,17 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
     let total_regions = count_regions(&text);
 
     let mut inserts: Vec<(usize, String)> = Vec::with_capacity(total_regions);
+    // Full-text duplicates of every affected region, one per region, each
+    // gated on the HI trigger note instead of the LO one - appended once at
+    // the very end of the file (see below) rather than spliced in-place,
+    // since a whole extra region doesn't need to sit next to its original
+    // the way a few extra opcode lines do.
+    let mut appended_regions = String::new();
     for idx in 0..total_regions {
         let articulation_id = region_articulation.get(&idx).copied().unwrap_or("normal");
-        let note = *note_for.get(articulation_id).unwrap_or(&switch_lo);
+        let lo_note = *note_lo_for.get(articulation_id).unwrap_or(&switch_lo);
+        let hi_note = *note_hi_for.get(articulation_id).unwrap_or(&switch_lo);
         let offset = region_insertion_offset(&text, idx)?;
-        let mut snippet = format!("sw_lokey={switch_lo}\nsw_hikey={switch_hi}\nsw_last={note}\n");
 
         // sw_lokey/sw_hikey only mark a trigger range - they don't stop a
         // region whose OWN playable lokey/hikey also reaches into it from
@@ -573,11 +607,15 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
         // pitch-shifted at the reserved pitch). A region missing from
         // region_opcodes (no sample=/note info - see count_regions) is
         // unknown, so it's treated as worst-case full-range rather than
-        // silently left unclamped.
+        // silently left unclamped. Shared verbatim by both the lo and hi
+        // copies of this region - it depends only on the region's own
+        // playable range and the zone's position, not on which trigger
+        // note is being assigned.
         let (lo, hi) = region_opcodes
             .get(&idx)
             .map(|opcodes| region_playable_range(opcodes))
             .unwrap_or((0, 127));
+        let mut key_clamp = String::new();
         if switch_hi == 127 {
             // Zone at the top (switch_lo..127) - only clamp down if this
             // region's own high end reaches up into it; its own lo is
@@ -585,14 +623,35 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
             // accidentally widen into a range.
             if hi >= switch_lo {
                 let clamped_hi = switch_lo.saturating_sub(1).min(hi);
-                snippet.push_str(&format!("lokey={lo}\nhikey={clamped_hi}\n"));
+                key_clamp.push_str(&format!("lokey={lo}\nhikey={clamped_hi}\n"));
             }
         } else if lo <= switch_hi {
             // Zone at the bottom (0..switch_hi).
             let clamped_lo = switch_hi.saturating_add(1).max(lo);
-            snippet.push_str(&format!("lokey={clamped_lo}\nhikey={hi}\n"));
+            key_clamp.push_str(&format!("lokey={clamped_lo}\nhikey={hi}\n"));
         }
-        inserts.push((offset, snippet));
+
+        let lo_snippet =
+            format!("sw_lokey={switch_lo}\nsw_hikey={switch_hi}\nsw_last={lo_note}\n{key_clamp}");
+        inserts.push((offset, lo_snippet));
+
+        // The hi-note trigger needs its own full copy of the region (not
+        // just another inserted opcode line) since SFZ's sw_last only ever
+        // matches ONE value per region - there's no "OR" form that would
+        // let a single region answer to both trigger notes. Note that this
+        // intentionally keeps the region's own ORIGINAL cosmetic
+        // sw_last=<id> text opcode (see this section's own top comment) -
+        // the real numeric sw_last appended after it still wins on parse,
+        // same as the lo copy above.
+        if let Ok((region_start, region_end)) = region_span(&text, idx) {
+            appended_regions.push_str(&text[region_start..region_end]);
+            if !appended_regions.ends_with('\n') {
+                appended_regions.push('\n');
+            }
+            appended_regions.push_str(&format!(
+                "sw_lokey={switch_lo}\nsw_hikey={switch_hi}\nsw_last={hi_note}\n{key_clamp}"
+            ));
+        }
     }
     // Descending, so each splice doesn't invalidate the offsets of
     // inserts still waiting to be applied (same discipline as
@@ -603,6 +662,7 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
     for (offset, snippet) in inserts {
         new_text.insert_str(offset, &snippet);
     }
+    new_text.push_str(&appended_regions);
 
     let stem = original_sfz_path
         .file_stem()
@@ -615,7 +675,8 @@ pub fn build_keyswitch_variant(original_sfz_path: &Path) -> Result<KeyswitchSfz,
         .iter()
         .map(|&id| ArticulationNote {
             id: id.to_string(),
-            note: note_for[id],
+            lo_note: note_lo_for[id],
+            hi_note: note_hi_for[id],
         })
         .collect();
 

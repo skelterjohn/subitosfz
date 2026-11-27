@@ -622,7 +622,15 @@ fn inject_keyswitches(
     part_ids: &[String],
     mark_mapping: &HashMap<String, String>,
     default_articulation: &str,
-    articulation_notes: &HashMap<String, u8>,
+    // (lo trigger note, hi trigger note) per articulation id - every chord
+    // fires BOTH (see the emission loop below) rather than a single switch
+    // note, since there's no real documentation of the order MuseScore/the
+    // synth actually dispatches simultaneous notes in, and a single switch
+    // note was confirmed (by ear, on a real score) to sometimes still lose
+    // that race on a genuine articulation change. Not a proven fix - just
+    // a cheap redundant hedge, worth revisiting if it turns out not to
+    // help in practice.
+    articulation_notes: &HashMap<String, (u8, u8)>,
 ) -> Result<InjectResult, String> {
     let doc = roxmltree::Document::parse(mscx_text).map_err(|e| format!("failed to parse mscx: {e}"))?;
     let default_resolved = (!default_articulation.is_empty()).then(|| default_articulation.to_string());
@@ -637,8 +645,8 @@ fn inject_keyswitches(
     let stale_part_ids = remove_previous_keyswitch_staves(&doc, &mut edits);
 
     let (switch_lo, switch_hi) = match (
-        articulation_notes.values().copied().min(),
-        articulation_notes.values().copied().max(),
+        articulation_notes.values().flat_map(|&(lo, hi)| [lo, hi]).min(),
+        articulation_notes.values().flat_map(|&(lo, hi)| [lo, hi]).max(),
     ) {
         (Some(lo), Some(hi)) => (lo, hi),
         _ => (0, 0), // no articulations at all - nothing to switch, loop below just does nothing
@@ -898,10 +906,11 @@ fn inject_keyswitches(
                         continue;
                     }
 
-                    let Some(&note_number) = articulation_notes.get(&resolved) else {
+                    let Some(&(lo_note, hi_note)) = articulation_notes.get(&resolved) else {
                         return Err(format!("no reserved keyswitch note for articulation \"{resolved}\""));
                     };
-                    let tpc = TPC_BY_CHROMA[(note_number % 12) as usize];
+                    let lo_tpc = TPC_BY_CHROMA[(lo_note % 12) as usize];
+                    let hi_tpc = TPC_BY_CHROMA[(hi_note % 12) as usize];
                     // A separate grace-note Chord for the switch trigger
                     // was tried and reverted: a grace note doesn't consume
                     // notated measure duration, but it DOES consume real
@@ -911,19 +920,21 @@ fn inject_keyswitches(
                     // played back as an audible gap before every single
                     // note (confirmed by ear - "a 32nd of rest before each
                     // note"). Back to one simultaneous Chord instead, with
-                    // the switch Note placed first/lowest-pitched -
-                    // build_keyswitch_variant now reserves the BOTTOM of
-                    // the MIDI range rather than the top, on the theory
-                    // that simultaneous notes dispatch in pitch-ascending
-                    // order rather than document order (confirmed by ear
-                    // that document order alone, with the switch note
-                    // previously at the chord's highest pitch, consistently
-                    // fired the switch after the note it was meant to
-                    // affect).
+                    // TWO switch Notes (lo_note/hi_note - see
+                    // build_keyswitch_variant) rather than one: a single
+                    // switch note placed lowest-pitched (on the theory that
+                    // simultaneous notes dispatch in pitch-ascending order)
+                    // was confirmed by ear to help, but not reliably enough
+                    // - real scores still showed the first note after a
+                    // genuine articulation change sounding like the old
+                    // one. Lacking real documentation of the actual
+                    // dispatch order, this fires both reserved notes for
+                    // the resolved articulation rather than betting on one.
                     staff_body.push_str(&format!(
-                        "<Chord><eid>{}</eid>{duration}{}<Note><eid>{}</eid><pitch>{note_number}</pitch><tpc>{tpc}</tpc></Note>{}</Chord>",
+                        "<Chord><eid>{}</eid>{duration}{}<Note><eid>{}</eid><pitch>{lo_note}</pitch><tpc>{lo_tpc}</tpc></Note><Note><eid>{}</eid><pitch>{hi_note}</pitch><tpc>{hi_tpc}</tpc></Note>{}</Chord>",
                         random_eid(),
                         grace_marker.unwrap_or(""),
+                        random_eid(),
                         random_eid(),
                         chord_notes_xml(child, mscx_text)
                     ));
@@ -1146,10 +1157,13 @@ pub fn apply(
     }
 
     let keyswitch = crate::sfz_write::build_keyswitch_variant(Path::new(sfz_path))?;
-    let articulation_notes: HashMap<String, u8> = keyswitch
+    // (lo, hi) rather than a single note - see inject_keyswitches' own
+    // comment on why every chord now fires two redundant trigger notes
+    // per articulation instead of one.
+    let articulation_notes: HashMap<String, (u8, u8)> = keyswitch
         .notes
         .iter()
-        .map(|n| (n.id.clone(), n.note))
+        .map(|n| (n.id.clone(), (n.lo_note, n.hi_note)))
         .collect();
 
     let mut entries = read_zip_entries(musescore_path)?;
