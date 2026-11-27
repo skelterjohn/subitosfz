@@ -29,7 +29,7 @@ const GITHUB_ISSUES_URL = 'https://github.com/skelterjohn/subitosfz/issues'
 let serverProcess: ChildProcess | null = null
 let serverPort: number | null = null
 
-// Singleton - repeated clicks on Help > About opcodes... just refocus the
+// Singleton - repeated clicks on Help > SFZ opcode information... just refocus the
 // one already-open reference window rather than stacking up duplicates,
 // since it's a reference panel the user keeps around while editing, not
 // a per-document window like the main editor's "New Window".
@@ -238,7 +238,7 @@ function buildMenu(): Menu {
       { label: 'Report an Issue', click: () => shell.openExternal(GITHUB_ISSUES_URL) },
       { type: 'separator' },
       {
-        label: 'About opcodes…',
+        label: 'SFZ opcode information…',
         // Opens its own window directly - main-process-only, like File >
         // New Window, since there's no existing window content to ask for.
         click: () => createOpcodesWindow()
@@ -373,7 +373,7 @@ app.whenReady().then(async () => {
     createWindow(false)
   })
 
-  // Same story - TopMenuBar.tsx's own Help > About opcodes... item has to
+  // Same story - TopMenuBar.tsx's own Help > SFZ opcode information... item has to
   // ask main to do this; the native menu's equivalent calls
   // createOpcodesWindow directly (see buildMenu above).
   ipcMain.handle('open-opcodes-window', () => {

@@ -122,7 +122,7 @@ export default function TopMenuBar({
     { type: 'item', label: 'GitHub Repository', onClick: () => runAndClose(helpActions.onGitHubRepo) },
     { type: 'item', label: 'Report an Issue', onClick: () => runAndClose(helpActions.onGitHubIssues) },
     { type: 'separator' },
-    { type: 'item', label: 'About opcodes…', onClick: () => runAndClose(helpActions.onOpenOpcodes) },
+    { type: 'item', label: 'SFZ opcode information…', onClick: () => runAndClose(helpActions.onOpenOpcodes) },
     { type: 'separator' },
     { type: 'item', label: 'About Subito sfz', onClick: () => runAndClose(helpActions.onAbout) }
   ]

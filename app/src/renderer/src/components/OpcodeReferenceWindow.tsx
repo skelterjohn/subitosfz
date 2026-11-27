@@ -29,7 +29,7 @@ function Highlighted({ text, indices }: { text: string; indices: Set<number> }):
   return <>{runs}</>
 }
 
-// The whole page for the "About opcodes..." window (see main/index.ts's
+// The whole page for the "SFZ opcode information..." window (see main/index.ts's
 // createOpcodesWindow and main.tsx's hash routing) - a separate top-level
 // OS window rather than a modal, so it can stay open and be referred back
 // to while editing opcodes in the main window. Searches both the opcode

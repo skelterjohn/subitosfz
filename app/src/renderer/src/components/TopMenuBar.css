@@ -37,18 +37,40 @@
    can never slide left underneath them. */
 .top-menu-bar__left {
   flex-shrink: 0;
+  /* height: 100% (not just align-items: stretch below) is what actually
+     pins this to the bar's full 32px - a flex item's own auto cross size
+     is based on its children's intrinsic (unstretched) heights, which for
+     the icon/menu buttons here is well under 32px, so without this the
+     group as a whole would size to that shorter intrinsic height instead
+     of the bar's. */
+  height: 100%;
   display: flex;
   align-items: stretch;
+  /* Keeps the same gap from the window's left edge the icon's own
+     margin-left used to provide, now that the icon itself fills the full
+     bar height with no room of its own to carry that margin. */
+  padding-left: 0.5rem;
 }
 
-/* Decorative only - pointer-events: none lets a click/drag here fall
-   through to the bar's own drag region behind it, same as clicking any
-   other blank part of the bar, rather than needing its own no-drag. */
+/* The icon's own dark background (see resources/icon.svg) previously only
+   filled a 16px square floating within the 32px bar, leaving the bar's own
+   lighter background visible above and below it - height: 80% (of
+   .top-menu-bar__left, now pinned to the bar's own height above) instead
+   fills most of the bar, just shy of edge-to-edge, with width: auto keeping
+   it square since the icon's own viewBox already is. align-self: center
+   overrides .top-menu-bar__left's own align-items: stretch, which would
+   otherwise only apply to children that don't already have an explicit
+   size - without it, falling short of 100% height would leave the icon
+   pinned to the top rather than centered in the gap. pointer-events: none
+   lets a click/drag here fall through to the bar's own drag region behind
+   it, same as clicking any other blank part of the bar, rather than
+   needing its own no-drag. */
 .top-menu-bar__icon {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin-left: 0.5rem;
+  height: 80%;
+  width: auto;
+  align-self: center;
+  margin-right: 0.4rem;
   pointer-events: none;
 }
 
