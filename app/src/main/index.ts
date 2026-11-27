@@ -25,6 +25,7 @@ const appStartTime = performance.timeOrigin
 // knowing these URLs themselves.
 const GITHUB_REPO_URL = 'https://github.com/skelterjohn/subitosfz'
 const GITHUB_ISSUES_URL = 'https://github.com/skelterjohn/subitosfz/issues'
+const SFZ_FORMAT_URL = 'https://sfzformat.com/'
 
 let serverProcess: ChildProcess | null = null
 let serverPort: number | null = null
@@ -244,6 +245,7 @@ function buildMenu(): Menu {
         click: () => createOpcodesWindow()
       },
       { type: 'separator' },
+      { label: 'About the sfz format', click: () => shell.openExternal(SFZ_FORMAT_URL) },
       {
         label: 'About Subito sfz',
         click: () => focusedWindow()?.webContents.send('menu-about')
@@ -385,6 +387,7 @@ app.whenReady().then(async () => {
   // they're already running in the main process.
   ipcMain.handle('open-github-repo', () => shell.openExternal(GITHUB_REPO_URL))
   ipcMain.handle('open-github-issues', () => shell.openExternal(GITHUB_ISSUES_URL))
+  ipcMain.handle('open-sfz-format-site', () => shell.openExternal(SFZ_FORMAT_URL))
 
   // Asked once by App.tsx's startup effect to decide whether to auto-load
   // the last session's sfz - true only for the one window that was

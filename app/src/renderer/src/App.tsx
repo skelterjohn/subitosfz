@@ -613,6 +613,7 @@ export default function App(): React.JSX.Element {
           onGitHubRepo: () => window.api.openGitHubRepo(),
           onGitHubIssues: () => window.api.openGitHubIssues(),
           onOpenOpcodes: () => window.api.openOpcodesWindow(),
+          onAboutSfz: () => window.api.openSfzFormatSite(),
           onAbout: () => setAboutOpen(true)
         }}
       />

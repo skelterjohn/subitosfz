@@ -40,6 +40,7 @@ export interface HelpMenuActions {
   onGitHubRepo: () => void
   onGitHubIssues: () => void
   onOpenOpcodes: () => void
+  onAboutSfz: () => void
   onAbout: () => void
 }
 
@@ -124,6 +125,7 @@ export default function TopMenuBar({
     { type: 'separator' },
     { type: 'item', label: 'SFZ opcode information…', onClick: () => runAndClose(helpActions.onOpenOpcodes) },
     { type: 'separator' },
+    { type: 'item', label: 'About the sfz format', onClick: () => runAndClose(helpActions.onAboutSfz) },
     { type: 'item', label: 'About Subito sfz', onClick: () => runAndClose(helpActions.onAbout) }
   ]
 

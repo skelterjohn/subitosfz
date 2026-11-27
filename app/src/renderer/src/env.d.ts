@@ -15,6 +15,7 @@ declare global {
       shouldAutoReopen: () => Promise<boolean>
       openGitHubRepo: () => Promise<void>
       openGitHubIssues: () => Promise<void>
+      openSfzFormatSite: () => Promise<void>
       getServerPort: () => Promise<number>
       getStartTime: () => Promise<number>
       getWorkingSfzPath: (originalPath: string) => Promise<string>

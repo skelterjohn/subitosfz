@@ -21,6 +21,7 @@ const api = {
   shouldAutoReopen: (): Promise<boolean> => ipcRenderer.invoke('should-auto-reopen'),
   openGitHubRepo: (): Promise<void> => ipcRenderer.invoke('open-github-repo'),
   openGitHubIssues: (): Promise<void> => ipcRenderer.invoke('open-github-issues'),
+  openSfzFormatSite: (): Promise<void> => ipcRenderer.invoke('open-sfz-format-site'),
   getServerPort: (): Promise<number> => ipcRenderer.invoke('get-server-port'),
   getStartTime: (): Promise<number> => ipcRenderer.invoke('get-start-time'),
   getWorkingSfzPath: (originalPath: string): Promise<string> =>
