@@ -180,6 +180,35 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  // Writes into the file's <global> section instead of one region - see
+  // sfz_write.rs's set_global_opcode. Not tied to any particular region, so
+  // there's no regionIndex to reselect by; instead this re-finds the
+  // ALREADY-selected cell (if any) via one of its own region's stable
+  // regionIndex, the same trick setRegionOpcode uses to survive the parse
+  // producing a brand-new object graph.
+  async function setGlobalOpcode(name: string, value: string): Promise<void> {
+    if (!workingPath) throw new Error('no instrument is open')
+    const port = await window.api.getServerPort()
+    const res = await fetch(`http://127.0.0.1:${port}/sfz/set-global-opcode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workingSfzPath: workingPath, name, value })
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.error ?? `request failed (${res.status})`)
+    }
+    const parsed = (await res.json()) as ParsedSfzResponse
+    const next = instrumentFromParsedSfz(parsed)
+    setInstrument(next)
+    const anchorRegionIndex = selectedCell?.samples[0]?.regions[0]?.regionIndex
+    setSelectedCell(anchorRegionIndex !== undefined ? findCellByRegionIndex(next, anchorRegionIndex) : null)
+    setDirty(true)
+    if (CELL_AFFECTING_OPCODES.has(name)) {
+      setLoadGeneration((g) => g + 1)
+    }
+  }
+
   // Same shape as setRegionOpcode, but fans the same set of opcodes out to
   // every region in `regionIndices` in one backend call - used for editing
   // a cell's own criteria (pitch, pitch range, volume, articulation) from
@@ -684,6 +713,7 @@ export default function App(): React.JSX.Element {
               cell={selectedCell}
               sfzFilePath={sfzFilePath}
               onSetOpcode={setRegionOpcode}
+              onSetGlobalOpcode={setGlobalOpcode}
               onDeleteRegion={deleteRegion}
               onSplitRoundRobin={() =>
                 selectedCell ? splitCellIntoRoundRobin(selectedCell) : Promise.resolve()

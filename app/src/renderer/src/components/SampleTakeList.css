@@ -275,8 +275,8 @@
   text-align: right;
 }
 
-/* Sits at the very bottom of the whole opcodes panel (not per-section) -
-   one place to add a brand-new opcode to this region. */
+/* One of these sits at the bottom of each scope's own opcode-rows list
+   (global, cell) - see AddOpcodeControl. */
 .sample-take-list__add-opcode-toggle {
   align-self: flex-start;
   cursor: pointer;

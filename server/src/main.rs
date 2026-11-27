@@ -180,6 +180,22 @@ async fn set_opcode_handler(
 }
 
 #[derive(Deserialize)]
+struct SetGlobalOpcodeRequest {
+    #[serde(rename = "workingSfzPath")]
+    working_sfz_path: String,
+    name: String,
+    value: String,
+}
+
+async fn set_global_opcode_handler(
+    Json(req): Json<SetGlobalOpcodeRequest>,
+) -> Result<Json<sfz_parse::ParsedSfz>, (StatusCode, Json<ErrorResponse>)> {
+    sfz_write::set_global_opcode(&PathBuf::from(req.working_sfz_path), &req.name, &req.value)
+        .map(Json)
+        .map_err(|error| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error })))
+}
+
+#[derive(Deserialize)]
 struct OpcodePair {
     name: String,
     value: String,
@@ -327,6 +343,7 @@ async fn main() {
         .route("/audio/chunk", post(chunk_handler))
         .route("/sfz/add-region", post(add_region_handler))
         .route("/sfz/set-opcode", post(set_opcode_handler))
+        .route("/sfz/set-global-opcode", post(set_global_opcode_handler))
         .route("/sfz/set-cell-opcodes", post(set_cell_opcodes_handler))
         .route("/sfz/delete-region", post(delete_region_handler))
         .route("/musescore/inspect", post(musescore_inspect_handler))

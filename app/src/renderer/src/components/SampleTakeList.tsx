@@ -6,6 +6,11 @@ interface Props {
   cell: CellRecord | null
   sfzFilePath: string | null
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  // Writes into the file's <global> section rather than one region - see
+  // App.tsx/sfz_write.rs's set_global_opcode. Threaded all the way down to
+  // RegionRow's always-visible "global" section, same as onSetOpcode is for
+  // its "cell" section.
+  onSetGlobalOpcode: (name: string, value: string) => Promise<void>
   onDeleteRegion: (regionIndex: number) => Promise<void>
   // Converts every take in the current cell (whatever that is, from the
   // caller's own perspective - this component doesn't pass anything back,
@@ -177,12 +182,13 @@ function regionLoopRangeSec(
   return { start: startFrames / nativeSampleRate, end: endFrames / nativeSampleRate }
 }
 
-// What gates whether this region plays at all for a given note/velocity -
-// grouped into their own "region" section in the opcode panel rather than
-// left to sort alphabetically among everything else, in a fixed read order
-// (key range, then velocity range, then articulation) rather than however
-// they happen to appear in the file.
-const REGION_CRITERIA_OPCODES = ['lokey', 'hikey', 'lovel', 'hivel', 'sw_last']
+// Exactly what defines a cell's span (key range, velocity range, and the
+// articulation it's gated on) - the opcode panel's "cell" section holds
+// ONLY these, in this fixed read order, never anything else; every other
+// local opcode (pan, tune, loop points, the sample path itself...) is
+// per-sample, not cell-defining, and lives in its own "sample" section
+// instead (see RegionRow).
+const REGION_CRITERIA_OPCODES = ['lokey', 'hikey', 'lovel', 'hivel', 'sw_last', 'sw_label']
 
 function formatDuration(seconds: number): string {
   return `${seconds.toFixed(2)}s`
@@ -217,6 +223,7 @@ export default function SampleTakeList({
   cell,
   sfzFilePath,
   onSetOpcode,
+  onSetGlobalOpcode,
   onDeleteRegion,
   onSplitRoundRobin
 }: Props): React.JSX.Element {
@@ -461,6 +468,7 @@ export default function SampleTakeList({
             onPlayRegion={playRegion}
             onPlayTake={playTake}
             onSetOpcode={onSetOpcode}
+            onSetGlobalOpcode={onSetGlobalOpcode}
             onDeleteRegion={onDeleteRegion}
             // True only while some take still bundles more than one region
             // together (no lorand/hirand yet distinguishing them - see
@@ -486,6 +494,7 @@ interface TakeItemProps {
   onPlayRegion: (key: string, region: RegionInfo) => void
   onPlayTake: (takeIndex: number, take: TakeInfo, holdSeconds: number) => void
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  onSetGlobalOpcode: (name: string, value: string) => Promise<void>
   onDeleteRegion: (regionIndex: number) => Promise<void>
   // Same action/state duplicated onto every take row in the cell - see
   // SampleTakeList's own handleSplit for why this isn't take-specific.
@@ -502,6 +511,7 @@ function TakeItem({
   onPlayRegion,
   onPlayTake,
   onSetOpcode,
+  onSetGlobalOpcode,
   onDeleteRegion,
   canSplit,
   splitting,
@@ -589,6 +599,7 @@ function TakeItem({
               onToggleOpen={() => toggleOpen(key)}
               onPlay={() => onPlayRegion(key, region)}
               onSetOpcode={onSetOpcode}
+              onSetGlobalOpcode={onSetGlobalOpcode}
               onCommitLoopEdit={(edge, edgeSec) => commitLoopEdit(key, edge, edgeSec)}
               onDeleteRegion={onDeleteRegion}
             />
@@ -660,6 +671,7 @@ interface RegionRowProps {
   onToggleOpen: () => void
   onPlay: () => void
   onSetOpcode: (regionIndex: number, name: string, value: string) => Promise<void>
+  onSetGlobalOpcode: (name: string, value: string) => Promise<void>
   onCommitLoopEdit: (edge: LoopEdge, edgeSec: number) => Promise<void>
   onDeleteRegion: (regionIndex: number) => Promise<void>
 }
@@ -673,6 +685,7 @@ function RegionRow({
   onToggleOpen,
   onPlay,
   onSetOpcode,
+  onSetGlobalOpcode,
   onCommitLoopEdit,
   onDeleteRegion
 }: RegionRowProps): React.JSX.Element {
@@ -777,31 +790,35 @@ function RegionRow({
               <TrashIcon />
             </button>
           </div>
-          {/* Globals first (per the backend's own ordering), then this
-              region's own cell-defining criteria (what note/velocity/
-              articulation it's gated on), both set off with a vertical rail
-              rather than a divider line - local opcodes below read as the
-              "default" flush-left case. */}
-          {globalOpcodes.length > 0 && (
-            <div className="sample-take-list__opcode-group">
-              <span className="sample-take-list__opcode-rail">global</span>
-              <div className="sample-take-list__opcode-rows">
-                {globalOpcodes.map((op) => (
-                  <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
-                ))}
-              </div>
+          {/* "global" writes into the file's <global> section (every
+              region in the file, not just this one - see App.tsx's
+              setGlobalOpcode). "cell" is read/edit only and holds ONLY the
+              opcodes that define this cell's span (REGION_CRITERIA_OPCODES)
+              - nothing else belongs here, so there's no add control for
+              it; those six are always written together whenever a region
+              is created (see sfz_write.rs's append_region) and edited as a
+              group from SampleEditorPanel, not added one at a time here.
+              Everything else local to this one region (pan, tune, loop
+              points, the sample path itself...) gets no rail of its own -
+              same flush-left, unlabeled treatment it always had - with one
+              shared add control below for it. */}
+          <div className="sample-take-list__opcode-group">
+            <span className="sample-take-list__opcode-rail">global</span>
+            <div className="sample-take-list__opcode-rows">
+              {globalOpcodes.map((op) => (
+                <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
+              ))}
+              <AddOpcodeControl onSetOpcode={onSetGlobalOpcode} />
             </div>
-          )}
-          {criteriaOpcodes.length > 0 && (
-            <div className="sample-take-list__opcode-group">
-              <span className="sample-take-list__opcode-rail">cell</span>
-              <div className="sample-take-list__opcode-rows">
-                {criteriaOpcodes.map((op) => (
-                  <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
-                ))}
-              </div>
+          </div>
+          <div className="sample-take-list__opcode-group">
+            <span className="sample-take-list__opcode-rail">cell</span>
+            <div className="sample-take-list__opcode-rows">
+              {criteriaOpcodes.map((op) => (
+                <OpcodeRow key={op.name} op={op} onSetOpcode={setOpcode} />
+              ))}
             </div>
-          )}
+          </div>
           {localOpcodes.length > 0 && (
             <div className="sample-take-list__opcode-rows">
               {localOpcodes.map((op) => (
@@ -905,9 +922,10 @@ function OpcodeRow({ op, onSetOpcode }: OpcodeRowProps): React.JSX.Element {
   )
 }
 
-// One control for the whole opcode panel (not per-section) - clicking it
-// reveals a name+value form, submitting via the same onSetOpcode path as
-// editing an existing value.
+// Rendered once per scope (global, cell) rather than once for the whole
+// panel - which callback it's given determines which scope the new opcode
+// actually lands in. Clicking it reveals a name+value form, submitting via
+// the same callback path used for editing an existing value.
 function AddOpcodeControl({
   onSetOpcode
 }: {

@@ -285,6 +285,80 @@ pub fn set_region_opcode(
     sfz_parse::parse(working_sfz_path)
 }
 
+// Byte offset where a new opcode should land within the file's FIRST
+// <global> section (right before the next header, or EOF) - same
+// header-is-first-word-of-a-line rule as region_span. None means the file
+// has no <global> header at all yet.
+fn global_insertion_offset(text: &str) -> Option<usize> {
+    let mut offset = 0usize;
+    let mut found = false;
+    let mut end = 0usize;
+
+    for line in text.split_inclusive('\n') {
+        let code = match line.find("//") {
+            Some(idx) => &line[..idx],
+            None => line
+        };
+        let first_word = code.split_whitespace().next();
+        let is_header = matches!(first_word, Some(w) if w.starts_with('<'));
+
+        if is_header {
+            if found {
+                return Some(end);
+            }
+            if first_word == Some("<global>") {
+                found = true;
+            }
+        }
+        if found {
+            end = offset + line.len();
+        }
+        offset += line.len();
+    }
+
+    if found { Some(end) } else { None }
+}
+
+// Sets a single opcode in the file's <global> section - unlike
+// set_region_opcode, this affects every region in the file, not just one.
+// Editing and adding are the same append-only trick used everywhere else
+// in this module: a later name=value line always wins over an earlier one
+// for the same key (sfz_parse.rs's `global.insert(key, value)`), so
+// appending within the <global> section's own span always becomes the
+// winning value on next parse.
+//
+// A <global> header affects only regions parsed AFTER it (sfz_parse.rs
+// accumulates `global` as it scans top-to-bottom, snapshotting it into
+// each region as that region is flushed) - so a file with no <global> yet
+// gets one created at the very top, guaranteeing it precedes every
+// existing region regardless of where they are.
+pub fn set_global_opcode(working_sfz_path: &Path, name: &str, value: &str) -> Result<ParsedSfz, String> {
+    let name = name.trim();
+    validate_opcode(name, value)?;
+
+    let mut text =
+        fs::read_to_string(working_sfz_path).map_err(|e| format!("failed to read sfz file: {e}"))?;
+
+    let mut insert_offset = match global_insertion_offset(&text) {
+        Some(offset) => offset,
+        None => {
+            text.insert_str(0, "<global>\n\n");
+            "<global>\n".len()
+        }
+    };
+
+    if insert_offset == text.len() && !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+        insert_offset = text.len();
+    }
+
+    text.insert_str(insert_offset, &format!("{name}={value}\n"));
+
+    fs::write(working_sfz_path, &text).map_err(|e| format!("failed to write sfz file: {e}"))?;
+
+    sfz_parse::parse(working_sfz_path)
+}
+
 // Applies the same set of opcodes to every region in `region_indices` in
 // one file write - used for editing a cell's own criteria (pitch, pitch
 // range, volume, articulation) from the SampleEditorPanel, where "the
