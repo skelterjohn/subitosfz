@@ -529,15 +529,24 @@ fn grace_marker_xml<'a>(chord: roxmltree::Node, source: &'a str) -> Option<&'a s
 // since reusing an eid that already exists elsewhere in the file (on the
 // real, visible note) risks a duplicate-id problem.
 //
-// Also carries over each note's own <Spanner type="Tie"> if present -
-// without it, a tied note loses the tie on this hidden copy and gets a
-// fresh attack at the second note instead of sustaining, so the mirrored
-// performance audibly re-strikes notes the real one just holds (confirmed
-// by ear). The mirrored staff has the identical rhythm as the real one,
-// so the tie's own <next>/<prev> relative-offset fractions stay valid
-// unchanged; only the <Tie> element's own eid (present on the starting
-// half, absent on the continuation half - see with_fresh_eid) needs
-// swapping for the same duplicate-eid reason as TimeSig/KeySig/Dynamic.
+// Also carries over each note's own <Spanner type="Tie"> elements if
+// present - without them, a tied note loses the tie on this hidden copy
+// and gets a fresh attack at the second note instead of sustaining, so the
+// mirrored performance audibly re-strikes notes the real one just holds
+// (confirmed by ear). A note in the MIDDLE of a tie chain (tied to both
+// the note before and the note after it) carries TWO separate <Spanner
+// type="Tie"> children - one with <next> (continuing the tie forward),
+// one with <prev> (the incoming tie ending here) - so this collects every
+// match rather than just the first (an earlier version used .find() here,
+// which silently dropped whichever of the two came second in the file,
+// confirmed against a real score: the real staff's tie-spanner count was
+// higher than the mirrored staff's by exactly the number of such
+// mid-chain notes). The mirrored staff has the identical rhythm as the
+// real one, so each tie's own <next>/<prev> relative-offset fractions
+// stay valid unchanged; only the <Tie> element's own eid (present on the
+// starting half, absent on the continuation half - see with_fresh_eid)
+// needs swapping for the same duplicate-eid reason as TimeSig/KeySig/
+// Dynamic.
 fn chord_notes_xml(chord: roxmltree::Node, mscx_text: &str) -> String {
     let mut out = String::new();
     for note in chord.children().filter(|n| n.has_tag_name("Note")) {
@@ -551,13 +560,13 @@ fn chord_notes_xml(chord: roxmltree::Node, mscx_text: &str) -> String {
             .find(|n| n.has_tag_name("tpc"))
             .and_then(element_text)
             .unwrap_or("14");
-        let tie = note
+        let ties: String = note
             .children()
-            .find(|n| n.has_tag_name("Spanner") && n.attribute("type") == Some("Tie"))
+            .filter(|n| n.has_tag_name("Spanner") && n.attribute("type") == Some("Tie"))
             .map(|n| with_fresh_eid(&mscx_text[n.range()]))
-            .unwrap_or_default();
+            .collect();
         out.push_str(&format!(
-            "<Note><eid>{}</eid><pitch>{pitch}</pitch><tpc>{tpc}</tpc>{tie}</Note>",
+            "<Note><eid>{}</eid><pitch>{pitch}</pitch><tpc>{tpc}</tpc>{ties}</Note>",
             random_eid()
         ));
     }
