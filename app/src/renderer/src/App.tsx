@@ -612,6 +612,7 @@ export default function App(): React.JSX.Element {
         helpActions={{
           onGitHubRepo: () => window.api.openGitHubRepo(),
           onGitHubIssues: () => window.api.openGitHubIssues(),
+          onOpenOpcodes: () => window.api.openOpcodesWindow(),
           onAbout: () => setAboutOpen(true)
         }}
       />

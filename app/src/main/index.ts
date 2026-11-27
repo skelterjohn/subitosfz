@@ -29,6 +29,12 @@ const GITHUB_ISSUES_URL = 'https://github.com/skelterjohn/subitosfz/issues'
 let serverProcess: ChildProcess | null = null
 let serverPort: number | null = null
 
+// Singleton - repeated clicks on Help > About opcodes... just refocus the
+// one already-open reference window rather than stacking up duplicates,
+// since it's a reference panel the user keeps around while editing, not
+// a per-document window like the main editor's "New Window".
+let opcodesWindow: BrowserWindow | null = null
+
 // Windows opened via File > New Window start blank (see App.tsx's startup
 // effect, gated on should-auto-reopen below) - only the one true "primary"
 // window (app launch, or macOS's 'activate' recreating one when none are
@@ -232,6 +238,13 @@ function buildMenu(): Menu {
       { label: 'Report an Issue', click: () => shell.openExternal(GITHUB_ISSUES_URL) },
       { type: 'separator' },
       {
+        label: 'About opcodes…',
+        // Opens its own window directly - main-process-only, like File >
+        // New Window, since there's no existing window content to ask for.
+        click: () => createOpcodesWindow()
+      },
+      { type: 'separator' },
+      {
         label: 'About Subito sfz',
         click: () => focusedWindow()?.webContents.send('menu-about')
       }
@@ -310,6 +323,40 @@ async function createWindow(autoReopen: boolean): Promise<void> {
   }
 }
 
+// A plain, independent window (native frame, no custom TopMenuBar/File
+// menu of its own) rather than reusing createWindow - it's a reference
+// panel, not another instrument-editing surface, so none of the
+// window-state persistence or hidden-titlebar chrome applies. Loads the
+// SAME renderer bundle as every other window; main.tsx's own hash check
+// (#/opcodes) is what picks OpcodeReferenceWindow over App for it.
+function createOpcodesWindow(): void {
+  if (opcodesWindow && !opcodesWindow.isDestroyed()) {
+    opcodesWindow.focus()
+    return
+  }
+
+  const win = new BrowserWindow({
+    width: 720,
+    height: 640,
+    title: 'Opcode Reference',
+    icon: nativeImage.createFromPath(appIconPath()),
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+  opcodesWindow = win
+  win.on('closed', () => {
+    if (opcodesWindow === win) opcodesWindow = null
+  })
+
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#/opcodes`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/opcodes' })
+  }
+}
+
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(buildMenu())
 
@@ -324,6 +371,13 @@ app.whenReady().then(async () => {
   // since it's already running in the main process.
   ipcMain.handle('new-window', () => {
     createWindow(false)
+  })
+
+  // Same story - TopMenuBar.tsx's own Help > About opcodes... item has to
+  // ask main to do this; the native menu's equivalent calls
+  // createOpcodesWindow directly (see buildMenu above).
+  ipcMain.handle('open-opcodes-window', () => {
+    createOpcodesWindow()
   })
 
   // TopMenuBar.tsx's own Help menu items - the native menu's equivalent

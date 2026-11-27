@@ -1,0 +1,93 @@
+.opcode-reference {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: #222;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.opcode-reference__search-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.opcode-reference__search {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.opcode-reference__search:focus {
+  outline: none;
+  border-color: #4a7fd9;
+}
+
+.opcode-reference__count {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: #888;
+  white-space: nowrap;
+}
+
+.opcode-reference__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.opcode-reference__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.opcode-reference__table tr {
+  border-bottom: 1px solid #eee;
+}
+
+.opcode-reference__table tr:hover {
+  background: #f7f9fc;
+}
+
+.opcode-reference__name {
+  vertical-align: top;
+  width: 1px;
+  white-space: nowrap;
+  padding: 0.5rem 0.75rem;
+  font-family: monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2a5db0;
+}
+
+.opcode-reference__description {
+  vertical-align: top;
+  padding: 0.5rem 0.75rem 0.5rem 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #333;
+}
+
+/* The fuzzy-matched characters within a row's name/description - plain
+   font-weight: bold alone barely stands out against the name column's own
+   already-semibold monospace, so this adds a highlight background too. */
+.opcode-reference__name b,
+.opcode-reference__description b {
+  background: #fff3b0;
+  font-weight: 700;
+}
+
+.opcode-reference__empty {
+  padding: 1rem 0.75rem;
+  color: #888;
+  font-size: 0.85rem;
+  text-align: center;
+}

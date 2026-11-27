@@ -17,6 +17,7 @@ const api = {
   platform: process.platform,
   quitApp: (): Promise<void> => ipcRenderer.invoke('quit-app'),
   newWindow: (): Promise<void> => ipcRenderer.invoke('new-window'),
+  openOpcodesWindow: (): Promise<void> => ipcRenderer.invoke('open-opcodes-window'),
   shouldAutoReopen: (): Promise<boolean> => ipcRenderer.invoke('should-auto-reopen'),
   openGitHubRepo: (): Promise<void> => ipcRenderer.invoke('open-github-repo'),
   openGitHubIssues: (): Promise<void> => ipcRenderer.invoke('open-github-issues'),

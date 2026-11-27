@@ -11,6 +11,7 @@ declare global {
       platform: string
       quitApp: () => Promise<void>
       newWindow: () => Promise<void>
+      openOpcodesWindow: () => Promise<void>
       shouldAutoReopen: () => Promise<boolean>
       openGitHubRepo: () => Promise<void>
       openGitHubIssues: () => Promise<void>
